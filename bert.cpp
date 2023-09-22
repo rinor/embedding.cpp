@@ -777,6 +777,8 @@ void bert_eval_batch(
         }
     }
 
+    const float eps = 1e-5f;
+
     // TODO: implement real batching
     for (int ba = 0; ba < n_batch_size; ba++)
     {
@@ -835,7 +837,7 @@ void bert_eval_batch(
 
         // embd norm
         {
-            inpL = ggml_norm(ctx0, inpL);
+            inpL = ggml_norm(ctx0, inpL, eps);
 
             inpL = ggml_add(ctx0,
                             ggml_mul(ctx0,
@@ -896,7 +898,7 @@ void bert_eval_batch(
 
             // attention norm
             {
-                cur = ggml_norm(ctx0, cur);
+                cur = ggml_norm(ctx0, cur, eps);
 
                 cur = ggml_add(ctx0,
                                ggml_mul(ctx0,
@@ -922,7 +924,7 @@ void bert_eval_batch(
 
             // output norm
             {
-                cur = ggml_norm(ctx0, cur);
+                cur = ggml_norm(ctx0, cur, eps);
 
                 cur = ggml_add(ctx0,
                                ggml_mul(ctx0,
