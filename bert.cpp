@@ -395,36 +395,6 @@ void llm_load_vocab(bert_model &model, const LLM_KV &kv, bert_vocab &vocab)
 {
     auto *ctx = model.gguf;
 
-    // // load tokenizer.json
-    // {
-    //     uint32_t len;
-    //     fin.read((char *)&len, sizeof(len));
-
-    //     std::string word;
-    //     word.resize(len);
-    //     fin.read((char *)word.data(), len);
-
-    //     new_bert->tokenizer = new BertTokenizer(word);
-    // }
-
-    // // load vocab
-    // {
-    //     int32_t n_vocab = model.hparams.n_vocab;
-
-    //     std::string word;
-    //     for (int i = 0; i < n_vocab; i++)
-    //     {
-    //         uint32_t len;
-    //         fin.read((char *)&len, sizeof(len));
-
-    //         word.resize(len);
-    //         fin.read((char *)word.data(), len);
-
-    //         vocab.token_to_id[word] = i;
-    //         vocab._id_to_token[i] = word;
-    //     }
-    // }
-
     const int token_idx = gguf_find_key(ctx, kv(LLM_KV_TOKENIZER_LIST).c_str());
     if (token_idx == -1)
     {
