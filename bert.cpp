@@ -146,18 +146,8 @@ int32_t bert_n_max_tokens(bert_ctx *ctx)
 
 const char *bert_vocab_id_to_token(bert_ctx *ctx, bert_vocab_id id)
 {
-    // bert_vocab &vocab = ctx->vocab;
-    // auto it = vocab._id_to_token.find(id);
-    // if (it != vocab._id_to_token.end())
-    // {
-    //     return it->second.c_str();
-    // }
-    // it = vocab._id_to_subword_token.find(id);
-    // if (it != vocab._id_to_subword_token.end())
-    // {
-    //     return it->second.c_str();
-    // }
-    // return "[UNK TOKEN from bert_vocab]";
+    bert_vocab &vocab = ctx->vocab;
+    return vocab.id_to_token.at(id).text.c_str();
 }
 
 //
