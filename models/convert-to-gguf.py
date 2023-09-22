@@ -245,7 +245,7 @@ class BertConvert:
             # print(f"{i}:{text}")
             data = bytes(text, "utf-8")
 
-            tokens.append(text)
+            tokens.append(data)
             scores.append(0.0)  # dymmy
             toktypes.append(gguf.TokenType.NORMAL)  # dummy
 
@@ -301,15 +301,20 @@ class BertConvert:
 
             n_dims = len(data.shape)
             old_dtype = data.dtype
+            data_dtype = data.dtype
 
-            # TODO: do convert here
-            # ftype == 0 -> float32, ftype == 1 -> float16
-            if ftype == 1 and name[-7:] == ".weight" and n_dims == 2:
-                print("  Converting to float16")
+            # TODO: Why cant we use these float16 as-is? There should be not reason to store float16 as float32
+            # if ftype == 1 and data_dtype == np.float16 and n_dims == 1:
+            #     data = data.astype(np.float32)
+
+            # if f16 desired, convert any float32 2-dim weight tensors to float16
+            if (
+                ftype == 1
+                and data_dtype == np.float32
+                and name.endswith(".weight")
+                and n_dims == 2
+            ):
                 data = data.astype(np.float16)
-                l_type = 1
-            else:
-                l_type = 0
 
             # header
             new_name = name
@@ -318,28 +323,27 @@ class BertConvert:
                 name
                 + " -> "
                 + new_name
+                + ", shape = "
+                + str(data.shape)
                 + ", n_dims = "
                 + str(n_dims)
                 + ", "
                 + str(old_dtype)
                 + " --> "
-                + str(data.dtype)
+                + str(data.dtype),
             )
 
             gguf_writer.add_tensor(new_name, data)
 
     def done(self):
-        hparams = self.hparams
         gguf_writer = self.gguf_writer
-        dir_model = self.dir_model
 
         print("gguf: write header")
         gguf_writer.write_header_to_file()
         print("gguf: write metadata")
         gguf_writer.write_kv_data_to_file()
-        if not args.vocab_only:
-            print("gguf: write tensors")
-            gguf_writer.write_tensors_to_file()
+        print("gguf: write tensors")
+        gguf_writer.write_tensors_to_file()
 
         gguf_writer.close()
 
