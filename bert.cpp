@@ -1,5 +1,6 @@
 #include "bert.h"
 #include "ggml.h"
+#include "bert_gguf.h"
 #include "tokenizer.h"
 
 #include <cassert>
@@ -56,15 +57,6 @@ struct bert_layer
     struct ggml_tensor *ff_o_b;
 };
 
-struct bert_vocab
-{
-    std::map<std::string, bert_vocab_id> token_to_id;
-    std::map<std::string, bert_vocab_id> subword_token_to_id;
-
-    std::map<bert_vocab_id, std::string> _id_to_token;
-    std::map<bert_vocab_id, std::string> _id_to_subword_token;
-};
-
 struct bert_model
 {
     bert_hparams hparams;
@@ -79,6 +71,7 @@ struct bert_model
     std::vector<bert_layer> layers;
 
     struct ggml_context *ctx;
+    struct gguf_context *gguf;
     std::map<std::string, struct ggml_tensor *> tensors;
 };
 
@@ -99,6 +92,34 @@ struct bert_buffer
     {
         delete[] data;
     }
+};
+
+struct bert_vocab
+{
+    using id = int32_t;
+    using token = std::string;
+    using ttype = bert_token_type;
+
+    struct token_data
+    {
+        token text;
+        float score;
+        ttype type;
+    };
+
+    std::string tokenizer_json;
+
+    std::unordered_map<token, id> token_to_id;
+    std::vector<token_data> id_to_token;
+
+    std::map<std::pair<std::string, std::string>, int> bpe_ranks;
+
+    // default LLaMA special tokens
+    id special_bos_id = 1;
+    id special_eos_id = 2;
+    id special_unk_id = 0;
+    id special_sep_id = -1;
+    id special_pad_id = -1;
 };
 
 struct bert_ctx
@@ -125,18 +146,18 @@ int32_t bert_n_max_tokens(bert_ctx *ctx)
 
 const char *bert_vocab_id_to_token(bert_ctx *ctx, bert_vocab_id id)
 {
-    bert_vocab &vocab = ctx->vocab;
-    auto it = vocab._id_to_token.find(id);
-    if (it != vocab._id_to_token.end())
-    {
-        return it->second.c_str();
-    }
-    it = vocab._id_to_subword_token.find(id);
-    if (it != vocab._id_to_subword_token.end())
-    {
-        return it->second.c_str();
-    }
-    return "[UNK TOKEN from bert_vocab]";
+    // bert_vocab &vocab = ctx->vocab;
+    // auto it = vocab._id_to_token.find(id);
+    // if (it != vocab._id_to_token.end())
+    // {
+    //     return it->second.c_str();
+    // }
+    // it = vocab._id_to_subword_token.find(id);
+    // if (it != vocab._id_to_subword_token.end())
+    // {
+    //     return it->second.c_str();
+    // }
+    // return "[UNK TOKEN from bert_vocab]";
 }
 
 //
@@ -346,84 +367,172 @@ void bert_tokenize(
 // Loading and setup
 //
 
+void llm_load_hparams(bert_model &model, const LLM_KV &kv, bert_hparams &hparams)
+{
+    auto *ctx = model.gguf;
+
+    // get general kv
+    // GGUF_GET_KEY(ctx, model.name, gguf_get_val_str, GGUF_TYPE_STRING, false, kv(LLM_KV_GENERAL_NAME));
+
+    // get hparams kv
+    GGUF_GET_KEY(ctx, hparams.n_vocab, gguf_get_arr_n, GGUF_TYPE_ARRAY, true, kv(LLM_KV_TOKENIZER_LIST));
+    GGUF_GET_KEY(ctx, hparams.n_max_tokens, gguf_get_val_u32, GGUF_TYPE_UINT32, true, kv(LLM_KV_CONTEXT_LENGTH));
+    GGUF_GET_KEY(ctx, hparams.n_embd, gguf_get_val_u32, GGUF_TYPE_UINT32, true, kv(LLM_KV_EMBEDDING_LENGTH));
+    GGUF_GET_KEY(ctx, hparams.n_intermediate, gguf_get_val_u32, GGUF_TYPE_UINT32, true, kv(LLM_KV_FEED_FORWARD_LENGTH));
+    GGUF_GET_KEY(ctx, hparams.n_head, gguf_get_val_u32, GGUF_TYPE_UINT32, true, kv(LLM_KV_ATTENTION_HEAD_COUNT));
+    GGUF_GET_KEY(ctx, hparams.n_layer, gguf_get_val_u32, GGUF_TYPE_UINT32, true, kv(LLM_KV_BLOCK_COUNT));
+
+    // fin.read((char *)&hparams.n_vocab, sizeof(hparams.n_vocab));
+    // fin.read((char *)&hparams.n_max_tokens, sizeof(hparams.n_max_tokens));
+    // fin.read((char *)&hparams.n_embd, sizeof(hparams.n_embd));
+    // fin.read((char *)&hparams.n_intermediate, sizeof(hparams.n_intermediate));
+    // fin.read((char *)&hparams.n_head, sizeof(hparams.n_head));
+    // fin.read((char *)&hparams.n_layer, sizeof(hparams.n_layer));
+    // fin.read((char *)&hparams.n_vocab_size, sizeof(hparams.n_vocab_size));
+    // fin.read((char *)&hparams.f16, sizeof(hparams.f16));
+
+    printf("%s: n_vocab = %d\n", __func__, hparams.n_vocab);
+    printf("%s: n_max_tokens   = %d\n", __func__, hparams.n_max_tokens);
+    printf("%s: n_embd  = %d\n", __func__, hparams.n_embd);
+    printf("%s: n_intermediate  = %d\n", __func__, hparams.n_intermediate);
+    printf("%s: n_head  = %d\n", __func__, hparams.n_head);
+    printf("%s: n_layer = %d\n", __func__, hparams.n_layer);
+    printf("%s: n_vocab_size = %d\n", __func__, hparams.n_vocab_size);
+    printf("%s: f16     = %d\n", __func__, hparams.f16);
+}
+
+void llm_load_vocab(bert_model &model, const LLM_KV &kv, bert_vocab &vocab)
+{
+    auto *ctx = model.gguf;
+
+    // // load tokenizer.json
+    // {
+    //     uint32_t len;
+    //     fin.read((char *)&len, sizeof(len));
+
+    //     std::string word;
+    //     word.resize(len);
+    //     fin.read((char *)word.data(), len);
+
+    //     new_bert->tokenizer = new BertTokenizer(word);
+    // }
+
+    // // load vocab
+    // {
+    //     int32_t n_vocab = model.hparams.n_vocab;
+
+    //     std::string word;
+    //     for (int i = 0; i < n_vocab; i++)
+    //     {
+    //         uint32_t len;
+    //         fin.read((char *)&len, sizeof(len));
+
+    //         word.resize(len);
+    //         fin.read((char *)word.data(), len);
+
+    //         vocab.token_to_id[word] = i;
+    //         vocab._id_to_token[i] = word;
+    //     }
+    // }
+
+    const int token_idx = gguf_find_key(ctx, kv(LLM_KV_TOKENIZER_LIST).c_str());
+    if (token_idx == -1)
+    {
+        throw std::runtime_error("cannot find tokenizer vocab in model file\n");
+    }
+
+    const int score_idx = gguf_find_key(ctx, kv(LLM_KV_TOKENIZER_SCORES).c_str());
+    if (score_idx == -1)
+    {
+        throw std::runtime_error("cannot find tokenizer scores in model file\n");
+    }
+
+    const float *scores = (const float *)gguf_get_arr_data(ctx, score_idx);
+
+    const int toktype_idx = gguf_find_key(ctx, kv(LLM_KV_TOKENIZER_TOKEN_TYPE).c_str());
+    if (toktype_idx == -1)
+    {
+        throw std::runtime_error("cannot find token type list in GGUF file\n");
+    }
+
+    const int *toktypes = (const int *)gguf_get_arr_data(ctx, toktype_idx);
+
+    // determine vocab type
+    {
+        std::string tokenizer_name;
+
+        GGUF_GET_KEY(ctx, tokenizer_name, gguf_get_val_str, GGUF_TYPE_STRING, true, kv(LLM_KV_TOKENIZER_MODEL));
+    }
+
+    const uint32_t n_vocab = gguf_get_arr_n(ctx, token_idx);
+
+    vocab.id_to_token.resize(n_vocab);
+
+    for (uint32_t i = 0; i < n_vocab; i++)
+    {
+        std::string word = gguf_get_arr_str(ctx, token_idx, i);
+
+        vocab.token_to_id[word] = i;
+
+        auto &token_data = vocab.id_to_token[i];
+        token_data.text = std::move(word);
+        token_data.score = scores[i];
+        token_data.type = (bert_token_type)toktypes[i];
+    }
+
+    // special tokens
+    GGUF_GET_KEY(ctx, vocab.special_bos_id, gguf_get_val_u32, GGUF_TYPE_UINT32, false, kv(LLM_KV_TOKENIZER_BOS_ID));
+    GGUF_GET_KEY(ctx, vocab.special_eos_id, gguf_get_val_u32, GGUF_TYPE_UINT32, false, kv(LLM_KV_TOKENIZER_EOS_ID));
+    GGUF_GET_KEY(ctx, vocab.special_unk_id, gguf_get_val_u32, GGUF_TYPE_UINT32, false, kv(LLM_KV_TOKENIZER_UNK_ID));
+    GGUF_GET_KEY(ctx, vocab.special_sep_id, gguf_get_val_u32, GGUF_TYPE_UINT32, false, kv(LLM_KV_TOKENIZER_SEP_ID));
+    GGUF_GET_KEY(ctx, vocab.special_pad_id, gguf_get_val_u32, GGUF_TYPE_UINT32, false, kv(LLM_KV_TOKENIZER_PAD_ID));
+}
+void llm_load_tensors() {}
+
 struct bert_ctx *bert_load_from_file(const char *fname)
 {
     printf("%s: loading model from '%s' - please wait ...\n", __func__, fname);
 
-    auto fin = std::ifstream(fname, std::ios::binary);
-    if (!fin)
+    int n_kv = 0;
+    int n_tensors = 0;
+    int n_created = 0;
+
+    int64_t n_elements = 0;
+    size_t n_bytes = 0;
+
+    bool use_mmap = false;
+
+    struct gguf_context *ctx_gguf = NULL;
+    struct ggml_context *ctx_meta = NULL;
+
+    struct gguf_init_params params = {
+        /*.no_alloc = */ true,
+        /*.ctx      = */ &ctx_meta,
+    };
+
+    ctx_gguf = gguf_init_from_file(fname, params);
+    if (!ctx_gguf)
     {
-        fprintf(stderr, "%s: failed to open '%s'\n", __func__, fname);
-        return nullptr;
+        throw std::runtime_error(format("%s: failed to load model from %s\n", __func__, fname));
     }
 
-    // verify magic
-    {
-        uint32_t magic;
-        fin.read((char *)&magic, sizeof(magic));
-        if (magic != 0x67676d6c)
-        {
-            fprintf(stderr, "%s: invalid model file '%s' (bad magic)\n", __func__, fname);
-            return nullptr;
-        }
-    }
+    n_kv = gguf_get_n_kv(ctx_gguf);
+    n_tensors = gguf_get_n_tensors(ctx_gguf);
 
     bert_ctx *new_bert = new bert_ctx;
     bert_model &model = new_bert->model;
     bert_vocab &vocab = new_bert->vocab;
+    model.gguf = ctx_gguf;
+    gguf_context *ctx = model.gguf;
 
-    // load hparams
-    {
-        auto &hparams = model.hparams;
+    const auto kv = LLM_KV(LLM_ARCH_BERT);
 
-        fin.read((char *)&hparams.n_vocab, sizeof(hparams.n_vocab));
-        fin.read((char *)&hparams.n_max_tokens, sizeof(hparams.n_max_tokens));
-        fin.read((char *)&hparams.n_embd, sizeof(hparams.n_embd));
-        fin.read((char *)&hparams.n_intermediate, sizeof(hparams.n_intermediate));
-        fin.read((char *)&hparams.n_head, sizeof(hparams.n_head));
-        fin.read((char *)&hparams.n_layer, sizeof(hparams.n_layer));
-        fin.read((char *)&hparams.n_vocab_size, sizeof(hparams.n_vocab_size));
-        fin.read((char *)&hparams.f16, sizeof(hparams.f16));
+    llm_load_hparams(model, kv, model.hparams);
+    llm_load_vocab(model, kv, new_bert->vocab);
+    llm_load_tensors();
 
-        printf("%s: n_vocab = %d\n", __func__, hparams.n_vocab);
-        printf("%s: n_max_tokens   = %d\n", __func__, hparams.n_max_tokens);
-        printf("%s: n_embd  = %d\n", __func__, hparams.n_embd);
-        printf("%s: n_intermediate  = %d\n", __func__, hparams.n_intermediate);
-        printf("%s: n_head  = %d\n", __func__, hparams.n_head);
-        printf("%s: n_layer = %d\n", __func__, hparams.n_layer);
-        printf("%s: n_vocab_size = %d\n", __func__, hparams.n_vocab_size);
-        printf("%s: f16     = %d\n", __func__, hparams.f16);
-    }
-
-    // load tokenizer.json
-    {
-        uint32_t len;
-        fin.read((char *)&len, sizeof(len));
-
-        std::string word;
-        word.resize(len);
-        fin.read((char *)word.data(), len);
-
-        new_bert->tokenizer = new BertTokenizer(word);
-    }
-
-    // load vocab
-    {
-        int32_t n_vocab = model.hparams.n_vocab;
-
-        std::string word;
-        for (int i = 0; i < n_vocab; i++)
-        {
-            uint32_t len;
-            fin.read((char *)&len, sizeof(len));
-
-            word.resize(len);
-            fin.read((char *)word.data(), len);
-
-            vocab.token_to_id[word] = i;
-            vocab._id_to_token[i] = word;
-        }
-    }
+    GGUF_GET_KEY(ctx, vocab.tokenizer_json, gguf_get_val_str, GGUF_TYPE_STRING, true, "ext.tokenizer.json");
+    new_bert->tokenizer = new BertTokenizer(vocab.tokenizer_json);
 
     // for the big tensors, we have the option to store the data in 16-bit floats or quantized
     // in order to save memory and also to speed up the computation
@@ -450,8 +559,6 @@ struct bert_ctx *bert_load_from_file(const char *fname)
         return nullptr;
     }
     }
-
-    auto &ctx = model.ctx;
 
     size_t model_mem_req = 0;
 
@@ -506,6 +613,7 @@ struct bert_ctx *bert_load_from_file(const char *fname)
     // prepare memory for the weights
     {
         const auto &hparams = model.hparams;
+        auto ctx = model.ctx;
 
         const int n_embd = hparams.n_embd;
         const int n_layer = hparams.n_layer;
@@ -578,126 +686,126 @@ struct bert_ctx *bert_load_from_file(const char *fname)
         }
     }
 
-    // load weights
-    {
-        int n_tensors = 0;
-        size_t total_size = 0;
+    // // load weights
+    // {
+    //     int n_tensors = 0;
+    //     size_t total_size = 0;
 
-        printf("%s: ", __func__);
+    //     printf("%s: ", __func__);
 
-        while (true)
-        {
-            int32_t n_dims;
-            int32_t length;
-            int32_t ftype;
+    //     while (true)
+    //     {
+    //         int32_t n_dims;
+    //         int32_t length;
+    //         int32_t ftype;
 
-            fin.read(reinterpret_cast<char *>(&n_dims), sizeof(n_dims));
-            fin.read(reinterpret_cast<char *>(&length), sizeof(length));
-            fin.read(reinterpret_cast<char *>(&ftype), sizeof(ftype));
+    //         fin.read(reinterpret_cast<char *>(&n_dims), sizeof(n_dims));
+    //         fin.read(reinterpret_cast<char *>(&length), sizeof(length));
+    //         fin.read(reinterpret_cast<char *>(&ftype), sizeof(ftype));
 
-            if (fin.eof())
-            {
-                break;
-            }
+    //         if (fin.eof())
+    //         {
+    //             break;
+    //         }
 
-            int64_t nelements = 1;
-            int64_t ne[2] = {1, 1};
-            for (int i = 0; i < n_dims; ++i)
-            {
-                int32_t ne_cur;
-                fin.read(reinterpret_cast<char *>(&ne_cur), sizeof(ne_cur));
-                ne[i] = ne_cur;
-                nelements *= ne[i];
-            }
+    //         int64_t nelements = 1;
+    //         int64_t ne[2] = {1, 1};
+    //         for (int i = 0; i < n_dims; ++i)
+    //         {
+    //             int32_t ne_cur;
+    //             fin.read(reinterpret_cast<char *>(&ne_cur), sizeof(ne_cur));
+    //             ne[i] = ne_cur;
+    //             nelements *= ne[i];
+    //         }
 
-            std::string name(length, 0);
-            fin.read(&name[0], length);
+    //         std::string name(length, 0);
+    //         fin.read(&name[0], length);
 
-            if (model.tensors.find(name.data()) == model.tensors.end())
-            {
-                fprintf(stderr, "%s: unknown tensor '%s' in model file\n", __func__, name.data());
-                bert_free(new_bert);
-                return nullptr;
-            }
+    //         if (model.tensors.find(name.data()) == model.tensors.end())
+    //         {
+    //             fprintf(stderr, "%s: unknown tensor '%s' in model file\n", __func__, name.data());
+    //             bert_free(new_bert);
+    //             return nullptr;
+    //         }
 
-            auto tensor = model.tensors[name.data()];
-            if (ggml_nelements(tensor) != nelements)
-            {
-                fprintf(stderr, "%s: tensor '%s' has wrong size in model file\n", __func__, name.data());
-                bert_free(new_bert);
-                return nullptr;
-            }
+    //         auto tensor = model.tensors[name.data()];
+    //         if (ggml_nelements(tensor) != nelements)
+    //         {
+    //             fprintf(stderr, "%s: tensor '%s' has wrong size in model file\n", __func__, name.data());
+    //             bert_free(new_bert);
+    //             return nullptr;
+    //         }
 
-            if (tensor->ne[0] != ne[0] || tensor->ne[1] != ne[1])
-            {
-                fprintf(stderr, "%s: tensor '%s' has wrong shape in model file: got [%lld, %lld], expected [%lld, %lld]\n",
-                        __func__, name.data(), tensor->ne[0], tensor->ne[1], ne[0], ne[1]);
-                bert_free(new_bert);
-                return nullptr;
-            }
+    //         if (tensor->ne[0] != ne[0] || tensor->ne[1] != ne[1])
+    //         {
+    //             fprintf(stderr, "%s: tensor '%s' has wrong shape in model file: got [%lld, %lld], expected [%lld, %lld]\n",
+    //                     __func__, name.data(), tensor->ne[0], tensor->ne[1], ne[0], ne[1]);
+    //             bert_free(new_bert);
+    //             return nullptr;
+    //         }
 
-            if (0)
-            {
-                static const char *ftype_str[] = {
-                    "f32",
-                    "f16",
-                    "q4_0",
-                    "q4_1",
-                };
-                printf("%24s - [%5lld, %5lld], type = %6s, %6.2f MB, %9zu bytes\n", name.data(), ne[0], ne[1], ftype_str[ftype], ggml_nbytes(tensor) / 1024.0 / 1024.0, ggml_nbytes(tensor));
-            }
+    //         if (0)
+    //         {
+    //             static const char *ftype_str[] = {
+    //                 "f32",
+    //                 "f16",
+    //                 "q4_0",
+    //                 "q4_1",
+    //             };
+    //             printf("%24s - [%5lld, %5lld], type = %6s, %6.2f MB, %9zu bytes\n", name.data(), ne[0], ne[1], ftype_str[ftype], ggml_nbytes(tensor) / 1024.0 / 1024.0, ggml_nbytes(tensor));
+    //         }
 
-            size_t bpe = 0;
+    //         size_t bpe = 0;
 
-            switch (ftype)
-            {
-            case 0:
-                bpe = ggml_type_size(GGML_TYPE_F32);
-                break;
-            case 1:
-                bpe = ggml_type_size(GGML_TYPE_F16);
-                break;
-            case 2:
-                bpe = ggml_type_size(GGML_TYPE_Q4_0);
-                assert(ne[0] % 64 == 0);
-                break;
-            case 3:
-                bpe = ggml_type_size(GGML_TYPE_Q4_1);
-                assert(ne[0] % 64 == 0);
-                break;
-            default:
-            {
-                fprintf(stderr, "%s: unknown ftype %d in model file\n", __func__, ftype);
-                bert_free(new_bert);
-                return nullptr;
-            }
-            };
+    //         switch (ftype)
+    //         {
+    //         case 0:
+    //             bpe = ggml_type_size(GGML_TYPE_F32);
+    //             break;
+    //         case 1:
+    //             bpe = ggml_type_size(GGML_TYPE_F16);
+    //             break;
+    //         case 2:
+    //             bpe = ggml_type_size(GGML_TYPE_Q4_0);
+    //             assert(ne[0] % 64 == 0);
+    //             break;
+    //         case 3:
+    //             bpe = ggml_type_size(GGML_TYPE_Q4_1);
+    //             assert(ne[0] % 64 == 0);
+    //             break;
+    //         default:
+    //         {
+    //             fprintf(stderr, "%s: unknown ftype %d in model file\n", __func__, ftype);
+    //             bert_free(new_bert);
+    //             return nullptr;
+    //         }
+    //         };
 
-            if ((nelements * bpe) / ggml_blck_size(tensor->type) != ggml_nbytes(tensor))
-            {
-                fprintf(stderr, "%s: tensor '%s' has wrong size in model file: got %zu, expected %llu\n",
-                        __func__, name.data(), ggml_nbytes(tensor), nelements * bpe);
-                bert_free(new_bert);
-                return nullptr;
-            }
+    //         if ((nelements * bpe) / ggml_blck_size(tensor->type) != ggml_nbytes(tensor))
+    //         {
+    //             fprintf(stderr, "%s: tensor '%s' has wrong size in model file: got %zu, expected %llu\n",
+    //                     __func__, name.data(), ggml_nbytes(tensor), nelements * bpe);
+    //             bert_free(new_bert);
+    //             return nullptr;
+    //         }
 
-            fin.read(reinterpret_cast<char *>(tensor->data), ggml_nbytes(tensor));
+    //         fin.read(reinterpret_cast<char *>(tensor->data), ggml_nbytes(tensor));
 
-            // printf("%42s - [%5d, %5d], type = %6s, %6.2f MB\n", name.data(), ne[0], ne[1], ftype == 0 ? "float" : "f16", ggml_nbytes(tensor)/1024.0/1024.0);
-            total_size += ggml_nbytes(tensor);
-            if (++n_tensors % 8 == 0)
-            {
-                printf(".");
-                fflush(stdout);
-            }
-        }
+    //         // printf("%42s - [%5d, %5d], type = %6s, %6.2f MB\n", name.data(), ne[0], ne[1], ftype == 0 ? "float" : "f16", ggml_nbytes(tensor)/1024.0/1024.0);
+    //         total_size += ggml_nbytes(tensor);
+    //         if (++n_tensors % 8 == 0)
+    //         {
+    //             printf(".");
+    //             fflush(stdout);
+    //         }
+    //     }
 
-        printf(" done\n");
+    //     printf(" done\n");
 
-        printf("%s: model size = %8.2f MB / num tensors = %d\n", __func__, total_size / 1024.0 / 1024.0, n_tensors);
-    }
+    //     printf("%s: model size = %8.2f MB / num tensors = %d\n", __func__, total_size / 1024.0 / 1024.0, n_tensors);
+    // }
 
-    fin.close();
+    // fin.close();
 
     // Calculate space requirements for setting up context buffers later
     {
