@@ -213,7 +213,6 @@ set(BERT_SOURCE
     tokenizer.cpp
     tokenizer.h    
     gguf.h
-    llama.h
 )
 
 add_library(bert
