@@ -1,7 +1,8 @@
 #include "bert.h"
 #include "ggml.h"
-#include "bert_gguf.h"
+#include "gguf.h"
 #include "tokenizer.h"
+#include "llama.h"
 
 #include <cassert>
 #include <cmath>
@@ -16,6 +17,17 @@
 #include <thread>
 #include <algorithm>
 
+enum bert_token_type
+{
+    LLAMA_TOKEN_TYPE_UNDEFINED = 0,
+    LLAMA_TOKEN_TYPE_NORMAL = 1,
+    LLAMA_TOKEN_TYPE_UNKNOWN = 2,
+    LLAMA_TOKEN_TYPE_CONTROL = 3,
+    LLAMA_TOKEN_TYPE_USER_DEFINED = 4,
+    LLAMA_TOKEN_TYPE_UNUSED = 5,
+    LLAMA_TOKEN_TYPE_BYTE = 6,
+};
+
 // default hparams (all-MiniLM-L6-v2)
 struct bert_hparams
 {
@@ -27,6 +39,7 @@ struct bert_hparams
     int32_t n_layer = 6;
     int32_t n_vocab_size = 2;
     int32_t f16 = 0;
+    float eps = 1e-12;
 };
 
 struct bert_layer
@@ -368,14 +381,11 @@ struct bert_loader
 
     bool use_mmap = false;
 
+    llama_file file;
     ggml_type ftype = ggml_type::GGML_TYPE_COUNT;
 
     struct gguf_context *ctx_gguf = NULL;
     struct ggml_context *ctx_meta = NULL;
-
-    bert_loader()
-    {
-    }
 
     ~bert_loader()
     {
@@ -389,7 +399,7 @@ struct bert_loader
         }
     }
 
-    void load(const char *fname)
+    bert_loader(const char *fname) : file(fname, "rb")
     {
 
         struct gguf_init_params params = {
@@ -406,10 +416,16 @@ struct bert_loader
         n_kv = gguf_get_n_kv(ctx_gguf);
         n_tensors = gguf_get_n_tensors(ctx_gguf);
 
+        // int32_t fver = gguf_get_version(ctx_gguf);
+
         for (int i = 0; i < n_tensors; i++)
         {
             const char *name = gguf_get_tensor_name(ctx_gguf, i);
             struct ggml_tensor *t = ggml_get_tensor(ctx_meta, name);
+            if (t == NULL)
+            {
+                throw std::runtime_error(format("%s: can not get tensor %s\n", __func__, name));
+            }
             n_elements += ggml_nelements(t);
             n_bytes += ggml_nbytes(t);
         }
@@ -501,8 +517,7 @@ struct bert_loader
         //     use_mmap = false;
         // }
 
-        this->use_mmap = use_mmap;
-
+        // this->use_mmap = use_mmap;
     }
 
     const char *get_tensor_name(int i) const
@@ -609,6 +624,83 @@ struct bert_loader
         }
 
         return create_tensor_for(ctx, cur, backend);
+    }
+
+    size_t file_offset(const char *name) const
+    {
+        const int idx = gguf_find_tensor(ctx_gguf, name);
+
+        if (idx < 0)
+        {
+            throw std::runtime_error(format("%s: tensor '%s' not found in the file", __func__, name));
+        }
+
+        return gguf_get_data_offset(ctx_gguf) + gguf_get_tensor_offset(ctx_gguf, idx);
+    }
+
+    void load_data_for(struct ggml_tensor *cur) const
+    {
+        const size_t offs = file_offset(ggml_get_name(cur));
+        file.seek(offs, SEEK_SET);
+        file.read_raw(cur->data, ggml_nbytes(cur));
+
+        // if (use_mmap)
+        // {
+        //     cur->data = (uint8_t *)mapping->addr + offs;
+        // }
+        // else
+        // {
+        // file.seek(offs, SEEK_SET);
+        // file.read_raw(cur->data, ggml_nbytes(cur));
+        // }
+    }
+
+    void load_all_data(struct ggml_context *ctx)
+    {
+        size_t size_data = 0;
+        size_t size_lock = 0;
+        size_t size_pref = 0; // prefetch
+
+        for (int i = 0; i < gguf_get_n_tensors(ctx_gguf); i++)
+        {
+            struct ggml_tensor *cur = ggml_get_tensor(ctx, gguf_get_tensor_name(ctx_gguf, i));
+            size_data += ggml_nbytes(cur);
+            if (cur->backend == GGML_BACKEND_CPU)
+            {
+                size_pref += ggml_nbytes(cur);
+            }
+        }
+
+        // if (use_mmap)
+        // {
+        //     mapping.reset(new llama_mmap(&file, size_pref, ggml_is_numa()));
+        //     if (lmlock)
+        //     {
+        //         lmlock->init(mapping->addr);
+        //     }
+        // }
+
+        size_t done_size = 0;
+        for (int i = 0; i < gguf_get_n_tensors(ctx_gguf); i++)
+        {
+            struct ggml_tensor *cur = ggml_get_tensor(ctx, gguf_get_tensor_name(ctx_gguf, i));
+            GGML_ASSERT(cur); // unused tensors should have been caught by load_data already
+
+            // allocate temp buffer if not using mmap
+            if (!use_mmap && cur->data == NULL)
+            {
+                GGML_ASSERT(cur->backend != GGML_BACKEND_CPU);
+#ifdef GGML_USE_CPU_HBM
+                cur->data = (uint8_t *)hbw_malloc(ggml_nbytes(cur));
+#else
+                cur->data = (uint8_t *)malloc(ggml_nbytes(cur));
+#endif
+            }
+
+            load_data_for(cur);
+
+            done_size += ggml_nbytes(cur);
+        }
     }
 
     void llm_print_meta(bert_ctx *bert)
@@ -726,9 +818,7 @@ struct bert_loader
             model.ctx = ggml_init(params);
             if (!model.ctx)
             {
-                fprintf(stderr, "%s: ggml_init() failed\n", __func__);
-                // bert_free(new_bert);
-                // return nullptr;
+                throw std::runtime_error(format("%s: ggml_init() failed\n", __func__));
             }
         }
 
@@ -783,6 +873,9 @@ struct bert_loader
                 layer.ff_o_b = create_tensor(ctx, "encoder.layer." + std::to_string(i) + ".output.dense.bias", {n_embd}, backend);
             }
         }
+
+        // load read weights
+        load_all_data(model.ctx);
     }
 };
 
@@ -791,8 +884,7 @@ bert_load_from_file(const char *fname)
 {
     printf("%s: loading model from '%s' - please wait ...\n", __func__, fname);
 
-    auto *loader = new bert_loader();
-    loader->load(fname);
+    auto *loader = new bert_loader(fname);
 
     bert_ctx *new_bert = new bert_ctx;
     bert_model &model = new_bert->model;
@@ -889,7 +981,7 @@ void bert_eval_batch(
         }
     }
 
-    const float eps = 1e-5f;
+    const float eps = model.hparams.eps;
 
     // TODO: implement real batching
     for (int ba = 0; ba < n_batch_size; ba++)
@@ -926,6 +1018,8 @@ void bert_eval_batch(
         struct ggml_cgraph gf = {};
 
         // Embeddings. word_embeddings + token_type_embeddings + position_embeddings
+        // in bert, it is
+        // token_embedding + segment_embedding + position_embedding
         struct ggml_tensor *token_layer = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, N);
         memcpy(token_layer->data, tokens, N * ggml_element_size(token_layer));
 
@@ -962,8 +1056,9 @@ void bert_eval_batch(
         {
             struct ggml_tensor *cur = inpL;
 
-            // self-attention
+            // self-attention (multiple head)
             {
+                // linear
                 struct ggml_tensor *Qcur = cur;
                 Qcur = ggml_reshape_3d(ctx0,
                                        ggml_add(ctx0, ggml_repeat(ctx0, model.layers[il].q_b, Qcur),
@@ -985,8 +1080,9 @@ void bert_eval_batch(
                                        d_head, n_head, N);
                 struct ggml_tensor *V = ggml_permute(ctx0, Vcur, 0, 2, 1, 3);
 
-                struct ggml_tensor *KQ = ggml_mul_mat(ctx0, K, Q);
+                // Scaled Dot-Product Attention
                 // KQ = soft_max(KQ / sqrt(head width))
+                struct ggml_tensor *KQ = ggml_mul_mat(ctx0, K, Q);
                 KQ = ggml_soft_max(ctx0,
                                    ggml_scale(ctx0,
                                               KQ,
@@ -1005,6 +1101,7 @@ void bert_eval_batch(
                            ggml_repeat(ctx0, model.layers[il].o_b, cur),
                            ggml_mul_mat(ctx0, model.layers[il].o_w, cur));
 
+            // Add & Norm
             // re-add the layer input
             cur = ggml_add(ctx0, cur, inpL);
 
@@ -1019,6 +1116,8 @@ void bert_eval_batch(
                                ggml_repeat(ctx0, model.layers[il].ln_att_b, cur));
             }
             struct ggml_tensor *att_output = cur;
+
+            // Forward Feed
             // intermediate_output = self.intermediate(attention_output)
             cur = ggml_mul_mat(ctx0, model.layers[il].ff_i_w, cur);
             cur = ggml_add(ctx0,
@@ -1031,6 +1130,8 @@ void bert_eval_batch(
             cur = ggml_add(ctx0,
                            ggml_repeat(ctx0, model.layers[il].ff_o_b, cur),
                            cur);
+
+            // Add & Norm
             // attentions bypass the intermediate layer
             cur = ggml_add(ctx0, att_output, cur);
 
@@ -1047,7 +1148,9 @@ void bert_eval_batch(
             inpL = cur;
         }
         inpL = ggml_cont(ctx0, ggml_transpose(ctx0, inpL));
-        // pooler
+
+        // pooling
+        // FIXME: pooling method is hard code here
         struct ggml_tensor *sum = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, N, 1);
         ggml_set_f32(sum, 1.0f / N);
         inpL = ggml_mul_mat(ctx0, inpL, sum);
