@@ -1,6 +1,9 @@
 [submodule "ggml"]
-	path = ggml
-	url = https://github.com/ggerganov/ggml.git
+path = ggml
+url = https://github.com/ggerganov/ggml.git
+ref = 8ca2c19a3bb8622954d858fbf6383522684eaf34
+branch = master
+
 [submodule "tokenizers-cpp"]
-	path = tokenizers-cpp
-	url = https://github.com/mlc-ai/tokenizers-cpp.git
+path = tokenizers-cpp
+url = https://github.com/mlc-ai/tokenizers-cpp.git
