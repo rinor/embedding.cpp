@@ -18,7 +18,6 @@ import torch
 from sentencepiece import SentencePieceProcessor
 from transformers import AutoModel, AutoTokenizer  # type: ignore[import]
 
-
 if TYPE_CHECKING:
     from typing import TypeAlias
 
@@ -185,7 +184,7 @@ class BertConvert:
         )
         gguf_writer.add_head_count(head_count)
         gguf_writer.add_head_count_kv(head_count_kv)
-        # gguf_writer.add_layer_norm_rms_eps(hparams["rms_norm_eps"])
+        gguf_writer.add_layer_norm_eps(hparams["layer_norm_eps"])
 
         if (
             "rope_scaling" in hparams
