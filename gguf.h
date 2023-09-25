@@ -16,7 +16,16 @@
 #include <thread>
 #include <algorithm>
 
-
+enum gguf_token_type
+{
+    GGUF_TOKEN_TYPE_UNDEFINED = 0,
+    GGUF_TOKEN_TYPE_NORMAL = 1,
+    GGUF_TOKEN_TYPE_UNKNOWN = 2,
+    GGUF_TOKEN_TYPE_CONTROL = 3,
+    GGUF_TOKEN_TYPE_USER_DEFINED = 4,
+    GGUF_TOKEN_TYPE_UNUSED = 5,
+    GGUF_TOKEN_TYPE_BYTE = 6,
+};
 
 //
 // gguf helpers
@@ -77,14 +86,14 @@ enum llm_arch
 };
 
 static std::map<llm_arch, std::string> LLM_ARCH_NAMES = {
-    {LLM_ARCH_LLAMA, "llama"},
-    {LLM_ARCH_FALCON, "falcon"},
-    {LLM_ARCH_GPT2, "gpt2"},
-    {LLM_ARCH_GPTJ, "gptj"},
-    {LLM_ARCH_GPTNEOX, "gptneox"},
-    {LLM_ARCH_MPT, "mpt"},
-    {LLM_ARCH_BAICHUAN, "baichuan"},
-    {LLM_ARCH_STARCODER, "starcoder"},
+    // {LLM_ARCH_LLAMA, "llama"},
+    // {LLM_ARCH_FALCON, "falcon"},
+    // {LLM_ARCH_GPT2, "gpt2"},
+    // {LLM_ARCH_GPTJ, "gptj"},
+    // {LLM_ARCH_GPTNEOX, "gptneox"},
+    // {LLM_ARCH_MPT, "mpt"},
+    // {LLM_ARCH_BAICHUAN, "baichuan"},
+    // {LLM_ARCH_STARCODER, "starcoder"},
     {LLM_ARCH_BERT, "bert"},
 };
 

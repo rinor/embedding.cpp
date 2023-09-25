@@ -17,17 +17,6 @@
 #include <thread>
 #include <algorithm>
 
-enum bert_token_type
-{
-    LLAMA_TOKEN_TYPE_UNDEFINED = 0,
-    LLAMA_TOKEN_TYPE_NORMAL = 1,
-    LLAMA_TOKEN_TYPE_UNKNOWN = 2,
-    LLAMA_TOKEN_TYPE_CONTROL = 3,
-    LLAMA_TOKEN_TYPE_USER_DEFINED = 4,
-    LLAMA_TOKEN_TYPE_UNUSED = 5,
-    LLAMA_TOKEN_TYPE_BYTE = 6,
-};
-
 // default hparams (all-MiniLM-L6-v2)
 struct bert_hparams
 {
@@ -111,7 +100,7 @@ struct bert_vocab
 {
     using id = int32_t;
     using token = std::string;
-    using ttype = bert_token_type;
+    using ttype = gguf_token_type;
 
     struct token_data
     {
@@ -783,7 +772,7 @@ struct bert_loader
             auto &token_data = vocab.id_to_token[i];
             token_data.text = std::move(word);
             token_data.score = scores[i];
-            token_data.type = (bert_token_type)toktypes[i];
+            token_data.type = (gguf_token_type)toktypes[i];
         }
 
         // special tokens
