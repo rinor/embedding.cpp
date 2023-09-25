@@ -2,7 +2,6 @@
 #include "ggml.h"
 #include "gguf.h"
 #include "tokenizer.h"
-#include "llama.h"
 
 #include <cassert>
 #include <cmath>
@@ -370,7 +369,7 @@ struct bert_loader
 
     bool use_mmap = false;
 
-    llama_file file;
+    gguf_file file;
     ggml_type ftype = ggml_type::GGML_TYPE_COUNT;
 
     struct gguf_context *ctx_gguf = NULL;

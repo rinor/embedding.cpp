@@ -1,5 +1,5 @@
-#ifndef BERT_GGUF_H
-#define BERT_GGUF_H
+#ifndef GGUF_H
+#define GGUF_H
 
 #include "ggml.h"
 
@@ -16,22 +16,17 @@
 #include <thread>
 #include <algorithm>
 
-enum gguf_token_type
-{
-    GGUF_TOKEN_TYPE_UNDEFINED = 0,
-    GGUF_TOKEN_TYPE_NORMAL = 1,
-    GGUF_TOKEN_TYPE_UNKNOWN = 2,
-    GGUF_TOKEN_TYPE_CONTROL = 3,
-    GGUF_TOKEN_TYPE_USER_DEFINED = 4,
-    GGUF_TOKEN_TYPE_UNUSED = 5,
-    GGUF_TOKEN_TYPE_BYTE = 6,
-};
+#ifdef __GNUC__
+#ifdef __MINGW32__
+#define GGML_ATTRIBUTE_FORMAT(...) __attribute__((format(gnu_printf, __VA_ARGS__)))
+#else
+#define GGML_ATTRIBUTE_FORMAT(...) __attribute__((format(printf, __VA_ARGS__)))
+#endif
+#else
+#define GGML_ATTRIBUTE_FORMAT(...)
+#endif
 
-//
-// gguf helpers
-//
-
-// LLAMA_ATTRIBUTE_FORMAT(1, 2)
+GGML_ATTRIBUTE_FORMAT(1, 2)
 static std::string format(const char *fmt, ...)
 {
     va_list ap;
@@ -47,6 +42,115 @@ static std::string format(const char *fmt, ...)
     va_end(ap);
     return std::string(buf.data(), size);
 }
+
+// a copy from `llama.cpp` named `llama_file`
+struct gguf_file
+{
+    // use FILE * so we don't have to re-open the file to mmap
+    FILE *fp;
+    size_t size;
+
+    gguf_file(const char *fname, const char *mode)
+    {
+        fp = std::fopen(fname, mode);
+        if (fp == NULL)
+        {
+            throw std::runtime_error(format("failed to open %s: %s", fname, strerror(errno)));
+        }
+        seek(0, SEEK_END);
+        size = tell();
+        seek(0, SEEK_SET);
+    }
+
+    size_t tell() const
+    {
+#ifdef _WIN32
+        __int64 ret = _ftelli64(fp);
+#else
+        long ret = std::ftell(fp);
+#endif
+        GGML_ASSERT(ret != -1); // this really shouldn't fail
+        return (size_t)ret;
+    }
+
+    void seek(size_t offset, int whence) const
+    {
+#ifdef _WIN32
+        int ret = _fseeki64(fp, (__int64)offset, whence);
+#else
+        int ret = std::fseek(fp, (long)offset, whence);
+#endif
+        GGML_ASSERT(ret == 0); // same
+    }
+
+    void read_raw(void *ptr, size_t len) const
+    {
+        if (len == 0)
+        {
+            return;
+        }
+        errno = 0;
+        std::size_t ret = std::fread(ptr, len, 1, fp);
+        if (ferror(fp))
+        {
+            throw std::runtime_error(format("read error: %s", strerror(errno)));
+        }
+        if (ret != 1)
+        {
+            throw std::runtime_error(std::string("unexpectedly reached end of file"));
+        }
+    }
+
+    uint32_t read_u32() const
+    {
+        uint32_t ret;
+        read_raw(&ret, sizeof(ret));
+        return ret;
+    }
+
+    void write_raw(const void *ptr, size_t len) const
+    {
+        if (len == 0)
+        {
+            return;
+        }
+        errno = 0;
+        size_t ret = std::fwrite(ptr, len, 1, fp);
+        if (ret != 1)
+        {
+            throw std::runtime_error(format("write error: %s", strerror(errno)));
+        }
+    }
+
+    void write_u32(std::uint32_t val) const
+    {
+        write_raw(&val, sizeof(val));
+    }
+
+    ~gguf_file()
+    {
+        if (fp)
+        {
+            std::fclose(fp);
+        }
+    }
+};
+
+// sync from gguf python
+enum gguf_token_type
+{
+    GGUF_TOKEN_TYPE_UNDEFINED = 0,
+    GGUF_TOKEN_TYPE_NORMAL = 1,
+    GGUF_TOKEN_TYPE_UNKNOWN = 2,
+    GGUF_TOKEN_TYPE_CONTROL = 3,
+    GGUF_TOKEN_TYPE_USER_DEFINED = 4,
+    GGUF_TOKEN_TYPE_UNUSED = 5,
+    GGUF_TOKEN_TYPE_BYTE = 6,
+};
+
+//
+// gguf helpers
+//
 
 #define GGUF_GET_KEY(ctx, dst, func, type, req, key)                                                                \
     {                                                                                                               \
@@ -73,7 +177,7 @@ static std::string format(const char *fmt, ...)
 
 enum llm_arch
 {
-    LLM_ARCH_LLAMA,
+    LLM_ARCH_GGML,
     LLM_ARCH_FALCON,
     LLM_ARCH_BAICHUAN,
     LLM_ARCH_GPT2,
@@ -86,14 +190,14 @@ enum llm_arch
 };
 
 static std::map<llm_arch, std::string> LLM_ARCH_NAMES = {
-    // {LLM_ARCH_LLAMA, "llama"},
-    // {LLM_ARCH_FALCON, "falcon"},
-    // {LLM_ARCH_GPT2, "gpt2"},
-    // {LLM_ARCH_GPTJ, "gptj"},
-    // {LLM_ARCH_GPTNEOX, "gptneox"},
-    // {LLM_ARCH_MPT, "mpt"},
-    // {LLM_ARCH_BAICHUAN, "baichuan"},
-    // {LLM_ARCH_STARCODER, "starcoder"},
+    {LLM_ARCH_GGML, "llama"},
+    {LLM_ARCH_FALCON, "falcon"},
+    {LLM_ARCH_GPT2, "gpt2"},
+    {LLM_ARCH_GPTJ, "gptj"},
+    {LLM_ARCH_GPTNEOX, "gptneox"},
+    {LLM_ARCH_MPT, "mpt"},
+    {LLM_ARCH_BAICHUAN, "baichuan"},
+    {LLM_ARCH_STARCODER, "starcoder"},
     {LLM_ARCH_BERT, "bert"},
 };
 
@@ -197,4 +301,4 @@ struct LLM_KV
         return ::format(LLM_KV_NAMES[kv].c_str(), LLM_ARCH_NAMES[arch].c_str());
     }
 };
-#endif // BERT_GGUF_H
+#endif // GGUF_H
