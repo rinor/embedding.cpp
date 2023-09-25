@@ -18,6 +18,7 @@ import torch
 from sentencepiece import SentencePieceProcessor
 from transformers import AutoModel, AutoTokenizer  # type: ignore[import]
 
+
 if TYPE_CHECKING:
     from typing import TypeAlias
 
@@ -290,7 +291,7 @@ class BertConvert:
         #     model_part = torch.load(f"{dir_model}/{part_name}", map_location="cpu")
 
         for name in list_vars.keys():
-            data = list_vars[name].squeeze().numpy()
+            data = list_vars[name]
             if name in [
                 "embeddings.position_ids",
                 "pooler.dense.weight",
@@ -298,6 +299,8 @@ class BertConvert:
             ]:
                 continue
             print("Processing variable: " + name + " with shape: ", data.shape)
+
+            data = data.squeeze().numpy()
 
             n_dims = len(data.shape)
             old_dtype = data.dtype
