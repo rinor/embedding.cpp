@@ -135,225 +135,6 @@ struct bert_ctx
     bert_buffer buf_compute;
 };
 
-int32_t bert_n_embd(bert_ctx *ctx)
-{
-    return ctx->model.hparams.n_embd;
-}
-
-int32_t bert_n_max_tokens(bert_ctx *ctx)
-{
-    return ctx->model.hparams.n_max_tokens;
-}
-
-const char *bert_vocab_id_to_token(bert_ctx *ctx, bert_vocab_id id)
-{
-    bert_vocab &vocab = ctx->vocab;
-    return vocab.id_to_token.at(id).text.c_str();
-}
-
-//
-// Cli interface
-//
-
-void bert_print_usage(char **argv, const bert_params &params)
-{
-    fprintf(stderr, "usage: %s [options]\n", argv[0]);
-    fprintf(stderr, "\n");
-    fprintf(stderr, "options:\n");
-    fprintf(stderr, "  -h, --help            show this help message and exit\n");
-    fprintf(stderr, "  -s SEED, --seed SEED  RNG seed (default: -1)\n");
-    fprintf(stderr, "  -t N, --threads N     number of threads to use during computation (default: %d)\n", params.n_threads);
-    fprintf(stderr, "  -p PROMPT, --prompt PROMPT\n");
-    fprintf(stderr, "                        prompt to start generation with (default: random)\n");
-    fprintf(stderr, "  --port p     port to bind in server mode (default: %d)\n", params.port);
-    fprintf(stderr, "  -m FNAME, --model FNAME\n");
-    fprintf(stderr, "                        model path (default: %s)\n", params.model);
-    fprintf(stderr, "\n");
-}
-
-bool bert_params_parse(int argc, char **argv, bert_params &params)
-{
-    for (int i = 1; i < argc; i++)
-    {
-        std::string arg = argv[i];
-
-        if (arg == "-t" || arg == "--threads")
-        {
-            params.n_threads = std::stoi(argv[++i]);
-        }
-        else if (arg == "-p" || arg == "--prompt")
-        {
-            params.prompt = argv[++i];
-        }
-        else if (arg == "--port")
-        {
-            params.port = std::stoi(argv[++i]);
-        }
-        else if (arg == "-m" || arg == "--model")
-        {
-            params.model = argv[++i];
-        }
-        else if (arg == "-h" || arg == "--help")
-        {
-            bert_print_usage(argv, params);
-            exit(0);
-        }
-        else
-        {
-            fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
-            bert_print_usage(argv, params);
-            exit(0);
-        }
-    }
-
-    return true;
-}
-
-//
-// Tokenizing
-//
-
-static size_t utf8_len(char src)
-{
-    const size_t lookup[] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3, 4};
-    uint8_t highbits = static_cast<uint8_t>(src) >> 4;
-    return lookup[highbits];
-}
-
-std::string stripAccents(const std::string &inputString)
-{
-    std::string resultString;
-    std::map<std::string, char> accentMap = {
-        {"À", 'A'},
-        {"Á", 'A'},
-        {"Â", 'A'},
-        {"Ã", 'A'},
-        {"Ä", 'A'},
-        {"Å", 'A'},
-        {"à", 'a'},
-        {"á", 'a'},
-        {"â", 'a'},
-        {"ã", 'a'},
-        {"ä", 'a'},
-        {"å", 'a'},
-        {"È", 'E'},
-        {"É", 'E'},
-        {"Ê", 'E'},
-        {"Ë", 'E'},
-        {"è", 'e'},
-        {"é", 'e'},
-        {"ê", 'e'},
-        {"ë", 'e'},
-        {"Ì", 'I'},
-        {"Í", 'I'},
-        {"Î", 'I'},
-        {"Ï", 'I'},
-        {"ì", 'i'},
-        {"í", 'i'},
-        {"î", 'i'},
-        {"ï", 'i'},
-        {"Ò", 'O'},
-        {"Ó", 'O'},
-        {"Ô", 'O'},
-        {"Õ", 'O'},
-        {"Ö", 'O'},
-        {"ò", 'o'},
-        {"ó", 'o'},
-        {"ô", 'o'},
-        {"õ", 'o'},
-        {"ö", 'o'},
-        {"Ù", 'U'},
-        {"Ú", 'U'},
-        {"Û", 'U'},
-        {"Ü", 'U'},
-        {"ù", 'u'},
-        {"ú", 'u'},
-        {"û", 'u'},
-        {"ü", 'u'},
-        {"Ý", 'Y'},
-        {"ý", 'y'},
-        {"Ç", 'C'},
-        {"ç", 'c'},
-        {"Ñ", 'N'},
-        {"ñ", 'n'},
-    };
-
-    for (size_t i = 0; i < inputString.length();)
-    {
-        int len = utf8_len(inputString[i]);
-        std::string curChar = inputString.substr(i, len);
-        auto iter = accentMap.find(curChar);
-        if (iter != accentMap.end())
-        {
-            resultString += iter->second;
-        }
-        else
-        {
-            resultString += curChar;
-        }
-        i += len;
-    }
-
-    return resultString;
-}
-
-std::string bert_normalize_prompt(const std::string &text)
-{
-    // yz: in rust, char is a unicode, https://doc.rust-lang.org/std/char/index.html
-    // TODO: handle chinese characters? https://github.com/huggingface/tokenizers/blob/ef5f50605ddf9f8caef1598c0e4853862b9707a7/tokenizers/src/normalizers/bert.rs#L98
-    std::string text2 = stripAccents(text);
-    for (size_t i = 0; i < text2.size(); i += utf8_len(text2[i]))
-    {
-        char c = text2[i];
-        if (c >= 'A' && c <= 'Z')
-            text2[i] = c - 'A' + 'a';
-    }
-    return text2;
-}
-void bert_tokenize(
-    struct bert_ctx *ctx,
-    const char *text,
-    bert_vocab_id *tokens,
-    int32_t *n_tokens,
-    int32_t n_max_tokens)
-{
-    auto tokenizer = ctx->tokenizer;
-
-    // TODO: add normalization
-
-    // call Encode to turn prompt into token ids
-    std::vector<int> ids = tokenizer->Encode(text);
-
-    int cls_tok_id = 101;
-    int sep_tok_id = 102;
-
-    int32_t t = 0;
-    tokens[t++] = cls_tok_id;
-    for (auto it = ids.begin(); it != ids.end(); it++)
-    {
-        // is [PAD]
-        if (*it == 0)
-        {
-            break;
-        }
-        tokens[t++] = *it;
-        if (t >= n_max_tokens)
-        {
-            break;
-        }
-    }
-
-    if (t >= n_max_tokens)
-    {
-        tokens[n_max_tokens - 1] = sep_tok_id;
-    }
-    else
-    {
-        tokens[t++] = sep_tok_id;
-    }
-    *n_tokens = t;
-}
-
 //
 // Loading and setup
 //
@@ -867,6 +648,127 @@ struct bert_loader
         load_all_data(model.ctx);
     }
 };
+
+int32_t bert_n_embd(bert_ctx *ctx)
+{
+    return ctx->model.hparams.n_embd;
+}
+
+int32_t bert_n_max_tokens(bert_ctx *ctx)
+{
+    return ctx->model.hparams.n_max_tokens;
+}
+
+const char *bert_vocab_id_to_token(bert_ctx *ctx, bert_vocab_id id)
+{
+    bert_vocab &vocab = ctx->vocab;
+    return vocab.id_to_token.at(id).text.c_str();
+}
+
+//
+// Cli interface
+//
+
+void bert_print_usage(char **argv, const bert_params &params)
+{
+    fprintf(stderr, "usage: %s [options]\n", argv[0]);
+    fprintf(stderr, "\n");
+    fprintf(stderr, "options:\n");
+    fprintf(stderr, "  -h, --help            show this help message and exit\n");
+    fprintf(stderr, "  -s SEED, --seed SEED  RNG seed (default: -1)\n");
+    fprintf(stderr, "  -t N, --threads N     number of threads to use during computation (default: %d)\n", params.n_threads);
+    fprintf(stderr, "  -p PROMPT, --prompt PROMPT\n");
+    fprintf(stderr, "                        prompt to start generation with (default: random)\n");
+    fprintf(stderr, "  --port p     port to bind in server mode (default: %d)\n", params.port);
+    fprintf(stderr, "  -m FNAME, --model FNAME\n");
+    fprintf(stderr, "                        model path (default: %s)\n", params.model);
+    fprintf(stderr, "\n");
+}
+
+bool bert_params_parse(int argc, char **argv, bert_params &params)
+{
+    for (int i = 1; i < argc; i++)
+    {
+        std::string arg = argv[i];
+
+        if (arg == "-t" || arg == "--threads")
+        {
+            params.n_threads = std::stoi(argv[++i]);
+        }
+        else if (arg == "-p" || arg == "--prompt")
+        {
+            params.prompt = argv[++i];
+        }
+        else if (arg == "--port")
+        {
+            params.port = std::stoi(argv[++i]);
+        }
+        else if (arg == "-m" || arg == "--model")
+        {
+            params.model = argv[++i];
+        }
+        else if (arg == "-h" || arg == "--help")
+        {
+            bert_print_usage(argv, params);
+            exit(0);
+        }
+        else
+        {
+            fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
+            bert_print_usage(argv, params);
+            exit(0);
+        }
+    }
+
+    return true;
+}
+
+//
+// Tokenizing
+//
+void bert_tokenize(
+    struct bert_ctx *ctx,
+    const char *text,
+    bert_vocab_id *tokens,
+    int32_t *n_tokens,
+    int32_t n_max_tokens)
+{
+    auto tokenizer = ctx->tokenizer;
+
+    // TODO: add normalization
+
+    // call Encode to turn prompt into token ids
+    std::vector<int> ids = tokenizer->Encode(text);
+
+    int cls_tok_id = 101;
+    int sep_tok_id = 102;
+
+    int32_t t = 0;
+    tokens[t++] = cls_tok_id;
+    for (auto it = ids.begin(); it != ids.end(); it++)
+    {
+        // is [PAD]
+        if (*it == 0)
+        {
+            break;
+        }
+        tokens[t++] = *it;
+        if (t >= n_max_tokens)
+        {
+            break;
+        }
+    }
+
+    if (t >= n_max_tokens)
+    {
+        tokens[n_max_tokens - 1] = sep_tok_id;
+    }
+    else
+    {
+        tokens[t++] = sep_tok_id;
+    }
+    *n_tokens = t;
+}
 
 struct bert_ctx *
 bert_load_from_file(const char *fname)
