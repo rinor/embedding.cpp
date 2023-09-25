@@ -25,3 +25,6 @@ target_link_libraries(main PRIVATE bert ggml tokenizers_cpp)
 
 add_executable(test_tokenizer test_tokenizer.cpp)
 target_link_libraries(test_tokenizer PRIVATE bert ggml tokenizers_cpp)
+
+add_executable(test_embedding test_embedding.cpp)
+target_link_libraries(test_embedding PRIVATE bert ggml tokenizers_cpp)
