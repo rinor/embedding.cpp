@@ -16,16 +16,7 @@
 #include <thread>
 #include <algorithm>
 
-enum bert_token_type
-{
-    LLAMA_TOKEN_TYPE_UNDEFINED = 0,
-    LLAMA_TOKEN_TYPE_NORMAL = 1,
-    LLAMA_TOKEN_TYPE_UNKNOWN = 2,
-    LLAMA_TOKEN_TYPE_CONTROL = 3,
-    LLAMA_TOKEN_TYPE_USER_DEFINED = 4,
-    LLAMA_TOKEN_TYPE_UNUSED = 5,
-    LLAMA_TOKEN_TYPE_BYTE = 6,
-};
+
 
 //
 // gguf helpers
@@ -197,5 +188,4 @@ struct LLM_KV
         return ::format(LLM_KV_NAMES[kv].c_str(), LLM_ARCH_NAMES[arch].c_str());
     }
 };
-
 #endif // BERT_GGUF_H
