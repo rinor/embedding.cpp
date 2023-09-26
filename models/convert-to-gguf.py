@@ -253,6 +253,9 @@ class BertConvert:
         special_vocab = gguf.SpecialVocab(dir_model)
         special_vocab.add_to_gguf(gguf_writer)
 
+        # FIXME: gguf lost cls process in default
+        gguf_writer.add_uint32("tokenizer.ggml.cls_token_id", tokenizer.cls_token_id)
+
     def convert_tensor(self):
         hparams = self.hparams
         gguf_writer = self.gguf_writer
