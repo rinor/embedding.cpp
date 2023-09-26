@@ -210,7 +210,7 @@ class BertConvert:
 
         # FIXME: a special kv to store tokenizer for `tokenizer.cpp`
         with open(dir_model / "tokenizer.json", "rb") as f:
-            gguf_writer.add_string("ext.tokenizer.json", f.read())
+            gguf_writer.add_string("blob.tokenizer.json", f.read())
 
         tokenizer = AutoTokenizer.from_pretrained(dir_model)
 
