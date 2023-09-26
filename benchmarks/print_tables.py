@@ -1,9 +1,13 @@
-import os
 import json
+import os
+import sys
 
 RESULTS_DIR = "results"
 BENCHMARKS = ["STSBenchmark", "EmotionClassification"]
-DATA_TYPES = [ "f32", "f16", "q4_0", "q4_1", "sbert", "sbert-batchless"]
+DATA_TYPES = ["f32", "f16", "q4_0", "q4_1", "sbert", "sbert-batchless"]
+
+if len(sys.argv) > 1:
+    RESULTS_DIR = sys.argv[1]
 
 # Define a dictionary to store the results
 results_dict = {}
@@ -14,15 +18,17 @@ for dir_name in os.listdir(RESULTS_DIR):
     m = dir_name.split("_")[0]
     models.add(m)
 
+
 def extract_results(test_data):
     res = {"time": test_data["evaluation_time"]}
     if "cos_sim" in test_data and "spearman" in test_data["cos_sim"]:
-        res['score'] = test_data["cos_sim"]["spearman"]
+        res["score"] = test_data["cos_sim"]["spearman"]
     elif "main_score" in test_data:
-        res['score'] = test_data["main_score"]
+        res["score"] = test_data["main_score"]
     else:
         print(f"can't extract results {test_data}")
     return res
+
 
 for model in models:
     model_results = {}
@@ -37,7 +43,7 @@ for model in models:
             with open(results_path, "r") as f:
                 results = json.load(f)
 
-            data_type_results[benchmark] = extract_results(results['test'])
+            data_type_results[benchmark] = extract_results(results["test"])
 
         model_results[data_type] = data_type_results
     results_dict[model] = model_results
