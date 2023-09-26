@@ -7,5 +7,5 @@ branch = master
 [submodule "tokenizers-cpp"]
 path = tokenizers-cpp
 url = https://github.com/mlc-ai/tokenizers-cpp.git
-branch = master
+branch = main
 ref = e47442f1aa766c27f17444218783ba1903890ba9
