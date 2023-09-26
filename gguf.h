@@ -3,19 +3,22 @@
 
 #include "ggml.h"
 
-#include <cinttypes>
 #include <cassert>
+#include <cinttypes>
+#include <climits>
 #include <cmath>
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
-#include <fstream>
-#include <map>
-#include <string>
-#include <vector>
-#include <iostream>
-#include <regex>
-#include <thread>
+
 #include <algorithm>
+#include <fstream>
+#include <iostream>
+#include <map>
+#include <regex>
+#include <string>
+#include <thread>
+#include <vector>
 
 #ifdef __GNUC__
 #ifdef __MINGW32__
