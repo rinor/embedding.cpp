@@ -20,6 +20,11 @@ void embedding_test(bert_ctx *ctx, const std::string &input, const std::vector<b
     {
         auto f = (float)embeddings.at(i);
         printf("%f\n", f);
+        // only print some for debug
+        if (i > 5)
+        {
+            break;
+        }
     }
 }
 
