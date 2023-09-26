@@ -227,7 +227,7 @@ class BertConvert:
         reversed_vocab = {idx: key for key, idx in vocab.items()}
 
         if not os.path.exists(dir_model / "vocab.json"):
-            with open(dir_model + "/vocab.json", "w") as f:
+            with open(dir_model / "vocab.json", "w") as f:
                 json.dump(reversed_vocab, f, indent=True, ensure_ascii=False)
 
         # write vocab
