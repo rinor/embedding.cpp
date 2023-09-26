@@ -293,7 +293,7 @@ int main(int argc, char **argv)
     const std::string fname_inp = argv[1];
     const std::string fname_out = argv[2];
 
-    const int itype = atoi(argv[3]);
+    const int quantize_type = atoi(argv[3]);
 
     const int64_t t_main_start_us = ggml_time_us();
 
@@ -303,7 +303,7 @@ int main(int argc, char **argv)
     {
         const int64_t t_start_us = ggml_time_us();
 
-        if (!bert_model_quantize(fname_inp.c_str(), fname_out.c_str(), itype))
+        if (!bert_model_quantize(fname_inp.c_str(), fname_out.c_str(), quantize_type))
         {
             fprintf(stderr, "%s: failed to quantize model from '%s'\n", __func__, fname_inp.c_str());
             return 1;
