@@ -52,6 +52,11 @@ make
 cd ..
 ```
 
+> rust should be installed.
+> see [rust](https://www.rust-lang.org/tools/install) 
+> or run `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
+
+
 ### Converting models to gguf format
 Converting models is similar to llama.cpp. Use models/convert-to-gguf.py to make hf models into either f32 or f16 gguf models. 
 Then use ./build/bin/quantize to turn those into Q4_0, 4bit per weight models.
