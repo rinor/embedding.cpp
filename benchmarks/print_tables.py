@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+from collections import OrderedDict
 
 RESULTS_DIR = "results"
 BENCHMARKS = ["STSBenchmark", "EmotionClassification"]
@@ -10,13 +11,13 @@ if len(sys.argv) > 1:
     RESULTS_DIR = sys.argv[1]
 
 # Define a dictionary to store the results
-results_dict = {}
+results_dict = OrderedDict()
 
 # Loop over all the directories and extract the models
-models = set()
+models = OrderedDict()
 for dir_name in os.listdir(RESULTS_DIR):
     m = dir_name.split("_")[0]
-    models.add(m)
+    models[m] = 1
 
 
 def extract_results(test_data):
@@ -30,7 +31,7 @@ def extract_results(test_data):
     return res
 
 
-for model in models:
+for model in models.keys():
     model_results = {}
     for data_type in DATA_TYPES:
         dir_name = f"{RESULTS_DIR}/{model}_{data_type}"
