@@ -18,16 +18,6 @@
 
 using tokenizers::Tokenizer;
 
-// BertTokenizer(const std::string &path)
-// {
-
-//     // Read blob from file.
-//     auto blob = LoadBytesFromFile(path);
-//     // Note: all the current factory APIs takes in-memory blob as input.
-//     // This gives some flexibility on how these blobs can be read.
-//     this->tok = Tokenizer::FromBlobJSON(blob);
-// }
-
 BertTokenizer::BertTokenizer(const std::string &blob)
 {
 
