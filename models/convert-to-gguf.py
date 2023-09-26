@@ -136,6 +136,7 @@ class BertConvert:
             sys.exit()
         self.hparams = hparams
 
+        # FIXME: use a dummy (invalid) ARCH value
         ARCH = list(gguf.MODEL_ARCH.__members__.values())[-1] + 1
         # NAME= gguf.MODEL_ARCH_NAMES[ARCH]
         NAME = "bert"
@@ -146,7 +147,7 @@ class BertConvert:
         gguf_writer = self.gguf_writer
         dir_model = self.dir_model
 
-        print("gguf: get model metadata")
+        print("gguf: get hparam metadata")
 
         block_count = hparams["num_hidden_layers"]
         head_count = hparams["num_attention_heads"]
@@ -195,35 +196,28 @@ class BertConvert:
                 if hparams["rope_scaling"]["type"] == "linear":
                     gguf_writer.add_rope_scale_linear(hparams["rope_scaling"]["factor"])
 
-    def convert_tokenization(self):
+    def convert_tokenizer(self):
         hparams = self.hparams
         gguf_writer = self.gguf_writer
         dir_model = self.dir_model
 
         print("gguf: get tokenizer metadata")
 
-        tokens: list[bytes] = []
-        scores: list[float] = []
-        toktypes: list[int] = []
-
         tokenizer_json_file = dir_model / "tokenizer.json"
         if not tokenizer_json_file.is_file():
             print(f"Error: Missing {tokenizer_json_file}", file=sys.stderr)
             sys.exit(1)
 
-        # vocab
-        print("gguf: set vocab")
-
+        # FIXME: a special kv to store tokenizer for `tokenizer.cpp`
         with open(dir_model / "tokenizer.json", "rb") as f:
             gguf_writer.add_string("ext.tokenizer.json", f.read())
 
         tokenizer = AutoTokenizer.from_pretrained(dir_model)
 
+        # simple test
         print(tokenizer.encode("I believe the meaning of life is"))
 
-        # write vocab
-        vocab_list = []
-
+        # get vocab
         # print(tokenizer.get_vocab())
         vocab = tokenizer.get_vocab()
         if not isinstance(vocab, dict):
@@ -236,6 +230,7 @@ class BertConvert:
             with open(dir_model + "/vocab.json", "w") as f:
                 json.dump(reversed_vocab, f, indent=True, ensure_ascii=False)
 
+        # write vocab
         tokens = []
         scores = []
         toktypes = []
@@ -253,6 +248,10 @@ class BertConvert:
         gguf_writer.add_token_list(tokens)
         gguf_writer.add_token_scores(scores)
         gguf_writer.add_token_types(toktypes)
+
+        # process special vocab
+        special_vocab = gguf.SpecialVocab(dir_model)
+        special_vocab.add_to_gguf(gguf_writer)
 
     def convert_tensor(self):
         hparams = self.hparams
@@ -277,7 +276,7 @@ class BertConvert:
         #         for n in range(1, num_parts + 1)
         #     )
 
-        # FIXME: load model is hard, try file process
+        # TODO: load a full model maybe hard, try file process
         model = AutoModel.from_pretrained(dir_model, low_cpu_mem_usage=True)
         print(model)
 
@@ -355,6 +354,6 @@ class BertConvert:
 
 convert = BertConvert(args)
 convert.convert_hparams()
-convert.convert_tokenization()
+convert.convert_tokenizer()
 convert.convert_tensor()
 convert.done()
