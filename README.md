@@ -63,9 +63,10 @@ Then use ./build/bin/quantize to turn those into Q4_0, 4bit per weight models.
 
 There is also models/run_conversions.sh which creates all 4 versions (f32, f16, Q4_0, Q4_1) at once.
 ```sh
+pip install -r requirements.txt
 cd models
 # Clone a model from hf
-git clone https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-cos-v1
+git clone https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2
 # Run conversions to 4 ggml formats (f32, f16, Q4_0, Q4_1)
-sh run_conversions.sh multi-qa-MiniLM-L6-cos-v1
+sh run_conversions.sh all-MiniLM-L6-v2
 ```
