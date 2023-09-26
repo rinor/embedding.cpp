@@ -3,6 +3,7 @@
 
 #include "ggml.h"
 
+#include <cinttypes>
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -301,4 +302,46 @@ struct LLM_KV
         return ::format(LLM_KV_NAMES[kv].c_str(), LLM_ARCH_NAMES[arch].c_str());
     }
 };
+
+enum gguf_fver
+{
+    GGUF_FILE_VERSION_V1 = 1,
+    GGUF_FILE_VERSION_V2 = 2,
+};
+
+static const char *llama_file_version_name(gguf_fver version)
+{
+    switch (version)
+    {
+    case GGUF_FILE_VERSION_V1:
+        return "GGUF V1 (support until nov 2023)";
+    case GGUF_FILE_VERSION_V2:
+        return "GGUF V2 (latest)";
+    }
+
+    return "unknown";
+}
+
+static std::string llama_format_tensor_shape(const std::vector<int64_t> &ne)
+{
+    char buf[256];
+    snprintf(buf, sizeof(buf), "%5" PRId64, ne.at(0));
+    for (size_t i = 1; i < ne.size(); i++)
+    {
+        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), ", %5" PRId64, ne.at(i));
+    }
+    return buf;
+}
+
+static std::string llama_format_tensor_shape(const struct ggml_tensor *t)
+{
+    char buf[256];
+    snprintf(buf, sizeof(buf), "%5" PRId64, t->ne[0]);
+    for (int i = 1; i < GGML_MAX_DIMS; i++)
+    {
+        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), ", %5" PRId64, t->ne[i]);
+    }
+    return buf;
+}
+
 #endif // GGUF_H

@@ -16,6 +16,13 @@ extern "C"
 {
 #endif
 
+    enum llama_log_level
+    {
+        LLAMA_LOG_LEVEL_ERROR = 2,
+        LLAMA_LOG_LEVEL_WARN = 3,
+        LLAMA_LOG_LEVEL_INFO = 4
+    };
+
     struct bert_params
     {
         int32_t n_threads = 6;
@@ -82,8 +89,20 @@ extern "C"
 
     BERT_API const char *bert_vocab_id_to_token(bert_ctx *ctx, bert_vocab_id id);
 
+    BERT_API bool bert_model_quantize(const char *fname_inp, const char *fname_out, int ftype);
+
 #ifdef __cplusplus
 }
 #endif
+
+// model quantization parameters
+typedef struct llama_model_quantize_params
+{
+    int nthread; // number of threads to use for quantizing, if <=0 will use std::thread::hardware_concurrency()
+    // enum llama_ftype ftype;      // quantize to this llama_ftype
+    bool allow_requantize;       // allow quantizing non-f32/f16 tensors
+    bool quantize_output_tensor; // quantize output.weight
+    bool only_copy;              // only copy tensors - ftype, allow_requantize and quantize_output_tensor are ignored
+} llama_model_quantize_params;
 
 #endif // BERT_H

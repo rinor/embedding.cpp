@@ -150,8 +150,9 @@ struct bert_loader
 
     bool use_mmap = false;
 
-    gguf_file file;
     ggml_type ftype = ggml_type::GGML_TYPE_COUNT;
+    gguf_file file;
+    gguf_fver fver;
 
     struct gguf_context *ctx_gguf = NULL;
     struct ggml_context *ctx_meta = NULL;
@@ -199,8 +200,8 @@ struct bert_loader
             n_bytes += ggml_nbytes(t);
         }
 
-        // LLAMA_LOG_INFO("%s: loaded meta data with %d key-value pairs and %d tensors from %s (version %s)\n",
-        //         __func__, n_kv, n_tensors, fname.c_str(), llama_file_version_name(fver));
+        printf("%s: loaded meta data with %d key-value pairs and %d tensors from %s (version %s)\n",
+               __func__, n_kv, n_tensors, fname, llama_file_version_name(fver));
 
         // determine file type based on the number of tensors for each quantization and print meta data
         // TODO: make optional
@@ -223,7 +224,7 @@ struct bert_loader
                     type_max = meta->type;
                 }
 
-                // LLAMA_LOG_INFO("%s: - tensor %4d: %32s %-8s [ %s ]\n", __func__, i, name, ggml_type_name(meta->type), llama_format_tensor_shape(meta).c_str());
+                // printf("%s: - tensor %4d: %32s %-8s [ %s ]\n", __func__, i, name, ggml_type_name(meta->type), llama_format_tensor_shape(meta).c_str());
             }
 
             switch (type_max)
@@ -266,7 +267,7 @@ struct bert_loader
                 const char *name = gguf_get_key(ctx_gguf, i);
                 const enum gguf_type type = gguf_get_kv_type(ctx_gguf, i);
 
-                // LLAMA_LOG_INFO("%s: - kv %3d: %42s %-8s\n", __func__, i, name, gguf_type_name(type));
+                printf("%s: - kv %3d: %42s %-8s\n", __func__, i, name, gguf_type_name(type));
             }
 
             // print type counts
@@ -277,7 +278,7 @@ struct bert_loader
                     continue;
                 }
 
-                // LLAMA_LOG_INFO("%s: - type %4s: %4d tensors\n", __func__, ggml_type_name(kv.first), kv.second);
+                printf("%s: - type %4s: %4d tensors\n", __func__, ggml_type_name(kv.first), kv.second);
             }
         }
 
@@ -386,9 +387,8 @@ struct bert_loader
                 throw std::runtime_error(
                     format("%s: tensor '%s' has wrong shape; expected %s, got %s",
                            __func__, name.c_str(),
-                           // llama_format_tensor_shape(ne).c_str(),
-                           // llama_format_tensor_shape(cur).c_str()
-                           "", ""));
+                           llama_format_tensor_shape(ne).c_str(),
+                           llama_format_tensor_shape(cur).c_str()));
             }
         }
 
@@ -780,9 +780,6 @@ bert_load_from_file(const char *fname)
     bert_ctx *new_bert = new bert_ctx;
     bert_model &model = new_bert->model;
     bert_vocab &vocab = new_bert->vocab;
-    // model.gguf = ctx_gguf;
-    // gguf_context *ctx = model.gguf;
-
     const auto kv = LLM_KV(LLM_ARCH_BERT);
 
     loader->llm_load_hparams(new_bert, kv);
@@ -1169,4 +1166,406 @@ void bert_encode_batch(
             bert_eval_batch(ctx, n_threads, n_batch_size, &sorted_tokens[i], &sorted_n_tokens[i], &sorted_embeddings[i]);
         }
     }
+}
+
+#if defined(_MSC_VER)
+#pragma warning(disable : 4244 4267) // possible loss of data
+#endif
+
+#ifdef __GNUC__
+#ifdef __MINGW32__
+#define LLAMA_ATTRIBUTE_FORMAT(...) __attribute__((format(gnu_printf, __VA_ARGS__)))
+#else
+#define LLAMA_ATTRIBUTE_FORMAT(...) __attribute__((format(printf, __VA_ARGS__)))
+#endif
+#else
+#define LLAMA_ATTRIBUTE_FORMAT(...)
+#endif
+
+//
+// Quantize
+//
+
+template <typename T>
+struct no_init
+{
+    T value;
+    no_init()
+    { /* do nothing */
+    }
+};
+
+static void zeros(std::ofstream &file, size_t n)
+{
+    char zero = 0;
+    for (size_t i = 0; i < n; ++i)
+    {
+        file.write(&zero, 1);
+    }
+}
+
+static void llama_convert_tensor_internal(
+    struct ggml_tensor *tensor, std::vector<no_init<float>> &output, std::vector<std::thread> &workers,
+    const size_t nelements, const int nthread)
+{
+    if (output.size() < nelements)
+    {
+        output.resize(nelements);
+    }
+    float *f32_output = (float *)output.data();
+
+    ggml_type_traits_t qtype;
+    if (ggml_is_quantized(tensor->type))
+    {
+        qtype = ggml_internal_get_type_traits(tensor->type);
+        if (qtype.to_float == NULL)
+        {
+            throw std::runtime_error(format("type %s unsupported for integer quantization: no dequantization available", ggml_type_name(tensor->type)));
+        }
+    }
+    else if (tensor->type != GGML_TYPE_F16)
+    {
+        throw std::runtime_error(format("cannot dequantize/convert tensor type %s", ggml_type_name(tensor->type)));
+    }
+
+    if (nthread < 2)
+    {
+        if (tensor->type == GGML_TYPE_F16)
+        {
+            ggml_fp16_to_fp32_row((ggml_fp16_t *)tensor->data, f32_output, nelements);
+        }
+        else if (ggml_is_quantized(tensor->type))
+        {
+            qtype.to_float(tensor->data, f32_output, nelements);
+        }
+        else
+        {
+            GGML_ASSERT(false); // unreachable
+        }
+        return;
+    }
+
+    auto block_size = tensor->type == GGML_TYPE_F16 ? 1 : (size_t)ggml_blck_size(tensor->type);
+    auto block_size_bytes = ggml_type_size(tensor->type);
+
+    GGML_ASSERT(nelements % block_size == 0);
+    auto nblocks = nelements / block_size;
+    auto blocks_per_thread = nblocks / nthread;
+    auto spare_blocks = nblocks - (blocks_per_thread * nthread); // if blocks aren't divisible by thread count
+
+    for (auto tnum = 0, in_buff_offs = 0, out_buff_offs = 0; tnum < nthread; tnum++)
+    {
+        auto thr_blocks = blocks_per_thread + (tnum == nthread - 1 ? spare_blocks : 0); // num blocks for this thread
+        auto thr_elems = thr_blocks * block_size;                                       // number of elements for this thread
+        auto thr_block_bytes = thr_blocks * block_size_bytes;                           // number of input bytes for this thread
+
+        auto compute = [qtype](ggml_type typ, uint8_t *inbuf, float *outbuf, int nels)
+        {
+            if (typ == GGML_TYPE_F16)
+            {
+                ggml_fp16_to_fp32_row((ggml_fp16_t *)inbuf, outbuf, nels);
+            }
+            else
+            {
+                qtype.to_float(inbuf, outbuf, nels);
+            }
+        };
+        workers.emplace_back(compute, tensor->type, (uint8_t *)tensor->data + in_buff_offs, f32_output + out_buff_offs, thr_elems);
+        in_buff_offs += thr_block_bytes;
+        out_buff_offs += thr_elems;
+    }
+    for (auto &w : workers)
+    {
+        w.join();
+    }
+    workers.clear();
+}
+
+bool bert_model_quantize(const char *fname_inp, const char *fname_out, int ftype)
+{
+    ggml_type quantized_type = GGML_TYPE_Q4_1;
+
+    switch (ftype)
+    {
+    case 2:
+        quantized_type = GGML_TYPE_Q4_0;
+        break;
+    case 3:
+        quantized_type = GGML_TYPE_Q4_1;
+        break;
+    default:
+        fprintf(stderr, "%s: invalid quantization type %d\n", __func__, ftype);
+        return false;
+    };
+
+    if (quantized_type != GGML_TYPE_Q4_0 && quantized_type != GGML_TYPE_Q4_1)
+    {
+        fprintf(stderr, "%s: invalid quantization type %d\n", __func__, quantized_type);
+        return false;
+    }
+
+    printf("%s: loading model from '%s'\n", __func__, fname_inp);
+
+    auto *loader = new bert_loader(fname_inp);
+
+    bert_ctx *new_bert = new bert_ctx;
+    bert_model &model = new_bert->model;
+    bert_vocab &vocab = new_bert->vocab;
+    const auto kv = LLM_KV(LLM_ARCH_BERT);
+
+    loader->llm_load_hparams(new_bert, kv);
+    loader->llm_load_vocab(new_bert, kv);
+
+    loader->llm_print_meta(new_bert);
+
+    loader->llm_load_tensors(new_bert);
+
+    printf(" done\n");
+
+    llama_model_quantize_params *params = new llama_model_quantize_params;
+    params->nthread = 1;
+    params->only_copy = false;
+    params->quantize_output_tensor = quantized_type;
+
+    // FIXME: fork from llama
+
+    int nthread = params->nthread;
+
+    if (nthread <= 0)
+    {
+        nthread = std::thread::hardware_concurrency();
+    }
+
+    if (params->only_copy)
+    {
+        ftype = loader->ftype;
+    }
+
+    const size_t align = GGUF_DEFAULT_ALIGNMENT;
+    struct gguf_context *ctx_out = gguf_init_empty();
+
+    // copy the KV pairs from the input file
+    gguf_set_kv(ctx_out, loader->ctx_gguf);
+    gguf_set_val_u32(ctx_out, "general.quantization_version", GGML_QNT_VERSION);
+    gguf_set_val_u32(ctx_out, "general.file_type", ftype);
+
+    size_t total_size_org = 0;
+    size_t total_size_new = 0;
+    std::vector<int64_t> hist_all(1 << 4, 0);
+
+    std::vector<std::thread> workers;
+    workers.reserve(nthread);
+    std::mutex mutex;
+
+    int idx = 0;
+
+    std::vector<no_init<uint8_t>> read_data;
+    std::vector<no_init<uint8_t>> work;
+    std::vector<no_init<float>> f32_conv_buf;
+
+    // populate the original tensors so we get an initial meta data
+    for (int i = 0; i < loader->n_tensors; ++i)
+    {
+        struct ggml_tensor *meta = loader->get_tensor_meta(i);
+        gguf_add_tensor(ctx_out, meta);
+    }
+
+    std::ofstream fout(fname_out, std::ios::binary);
+
+    const size_t meta_size = gguf_get_meta_size(ctx_out);
+
+    // printf("%s: meta size = %zu bytes\n", __func__, meta_size);
+
+    // placeholder for the meta data
+    ::zeros(fout, meta_size);
+
+    for (int i = 0; i < loader->n_tensors; ++i)
+    {
+        struct ggml_tensor *tensor = loader->get_tensor_meta(i);
+
+        const std::string name = ggml_get_name(tensor);
+
+        if (read_data.size() < ggml_nbytes(tensor))
+        {
+            read_data.resize(ggml_nbytes(tensor));
+        }
+        tensor->data = read_data.data();
+        loader->load_data_for(tensor);
+
+        printf("[%4d/%4d] %36s - [%s], type = %6s, ",
+               ++idx, loader->n_tensors,
+               ggml_get_name(tensor),
+               "",
+               //    llama_format_tensor_shape(tensor).c_str(),
+               ggml_type_name(tensor->type));
+
+        // This used to be a regex, but <regex> has an extreme cost to compile times.
+        bool quantize = name.rfind("weight") == name.size() - 6; // ends with 'weight'?
+
+        // quantize only 2D tensors
+        quantize &= (tensor->n_dims == 2);
+        quantize &= params->quantize_output_tensor || name != "output.weight";
+        quantize &= !params->only_copy;
+
+        enum ggml_type new_type;
+        void *new_data;
+        size_t new_size;
+
+        if (quantize)
+        {
+            new_type = quantized_type;
+
+            // If we've decided to quantize to the same type the tensor is already
+            // in then there's nothing to do.
+            quantize = tensor->type != new_type;
+        }
+        if (!quantize)
+        {
+            new_type = tensor->type;
+            new_data = tensor->data;
+            new_size = ggml_nbytes(tensor);
+            printf("size = %8.3f MB\n", ggml_nbytes(tensor) / 1024.0 / 1024.0);
+        }
+        else
+        {
+            const size_t nelements = ggml_nelements(tensor);
+
+            float *f32_data;
+
+            if (tensor->type == GGML_TYPE_F32)
+            {
+                f32_data = (float *)tensor->data;
+            }
+            else if (ggml_is_quantized(tensor->type) && !params->allow_requantize)
+            {
+                throw std::runtime_error(format("requantizing from type %s is disabled", ggml_type_name(tensor->type)));
+            }
+            else
+            {
+                llama_convert_tensor_internal(tensor, f32_conv_buf, workers, nelements, nthread);
+                f32_data = (float *)f32_conv_buf.data();
+            }
+
+            printf("quantizing to %s .. ", ggml_type_name(new_type));
+            fflush(stdout);
+
+            if (work.size() < nelements * 4)
+            {
+                work.resize(nelements * 4); // upper bound on size
+            }
+            new_data = work.data();
+            std::array<int64_t, 1 << 4> hist_cur = {};
+
+            static const int chunk_size = 32 * 512;
+            const int nchunk = (nelements + chunk_size - 1) / chunk_size;
+            const int nthread_use = nthread > 1 ? std::max(1, std::min(nthread, nchunk)) : 1;
+            if (nthread_use < 2)
+            {
+                new_size = ggml_quantize_chunk(new_type, f32_data, new_data, 0, nelements, hist_cur.data());
+            }
+            else
+            {
+                size_t counter = 0;
+                new_size = 0;
+                auto compute = [&mutex, &counter, &hist_cur, &new_size, new_type, f32_data, new_data, nelements]()
+                {
+                    std::array<int64_t, 1 << 4> local_hist = {};
+                    size_t local_size = 0;
+                    while (true)
+                    {
+                        std::unique_lock<std::mutex> lock(mutex);
+                        size_t first = counter;
+                        counter += chunk_size;
+                        if (first >= nelements)
+                        {
+                            if (local_size > 0)
+                            {
+                                for (int j = 0; j < int(local_hist.size()); ++j)
+                                {
+                                    hist_cur[j] += local_hist[j];
+                                }
+                                new_size += local_size;
+                            }
+                            break;
+                        }
+                        lock.unlock();
+                        size_t last = std::min(nelements, first + chunk_size);
+                        local_size += ggml_quantize_chunk(new_type, f32_data, new_data, first, last - first, local_hist.data());
+                    }
+                };
+                for (int it = 0; it < nthread_use - 1; ++it)
+                {
+                    workers.emplace_back(compute);
+                }
+                compute();
+                for (auto &w : workers)
+                {
+                    w.join();
+                }
+                workers.clear();
+            }
+
+            printf("size = %8.2f MB -> %8.2f MB | hist: ", ggml_nbytes(tensor) / 1024.0 / 1024.0, new_size / 1024.0 / 1024.0);
+            int64_t tot_count = 0;
+            for (size_t i = 0; i < hist_cur.size(); i++)
+            {
+                hist_all[i] += hist_cur[i];
+                tot_count += hist_cur[i];
+            }
+
+            if (tot_count > 0)
+            {
+                for (size_t i = 0; i < hist_cur.size(); i++)
+                {
+                    printf("%5.3f ", hist_cur[i] / float(nelements));
+                }
+            }
+            printf("\n");
+        }
+        total_size_org += ggml_nbytes(tensor);
+        total_size_new += new_size;
+
+        // update the gguf meta data as we go
+        gguf_set_tensor_type(ctx_out, name.c_str(), new_type);
+        gguf_set_tensor_data(ctx_out, name.c_str(), new_data, new_size);
+
+        // write tensor data + padding
+        fout.write((const char *)new_data, new_size);
+        zeros(fout, GGML_PAD(new_size, align) - new_size);
+    }
+
+    // go back to beginning of file and write the updated meta data
+    {
+        fout.seekp(0);
+        std::vector<uint8_t> data(gguf_get_meta_size(ctx_out));
+        gguf_get_meta_data(ctx_out, data.data());
+        fout.write((const char *)data.data(), data.size());
+    }
+
+    fout.close();
+
+    gguf_free(ctx_out);
+
+    printf("%s: model size  = %8.2f MB\n", __func__, total_size_org / 1024.0 / 1024.0);
+    printf("%s: quant size  = %8.2f MB\n", __func__, total_size_new / 1024.0 / 1024.0);
+
+    // print histogram for all tensors
+    {
+        int64_t sum_all = 0;
+        for (size_t i = 0; i < hist_all.size(); i++)
+        {
+            sum_all += hist_all[i];
+        }
+
+        if (sum_all > 0)
+        {
+            printf("%s: hist: ", __func__);
+            for (size_t i = 0; i < hist_all.size(); i++)
+            {
+                printf("%5.3f ", hist_all[i] / float(sum_all));
+            }
+            printf("\n");
+        }
+    }
+    return true;
 }
