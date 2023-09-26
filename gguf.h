@@ -245,6 +245,9 @@ enum llm_kv
     LLM_KV_TOKENIZER_PAD_ID,
     LLM_KV_TOKENIZER_HF_JSON,
     LLM_KV_TOKENIZER_RWKV,
+
+    // FIXME: add for embedding only
+    LLM_KV_TOKENIZER_CLS_ID
 };
 
 static std::map<llm_kv, std::string> LLM_KV_NAMES = {
@@ -289,6 +292,10 @@ static std::map<llm_kv, std::string> LLM_KV_NAMES = {
     {LLM_KV_TOKENIZER_PAD_ID, "tokenizer.ggml.padding_token_id"},
     {LLM_KV_TOKENIZER_HF_JSON, "tokenizer.huggingface.json"},
     {LLM_KV_TOKENIZER_RWKV, "tokenizer.rwkv.world"},
+
+    // FIXME: add for embedding only
+    {LLM_KV_TOKENIZER_CLS_ID, "tokenizer.ggml.cls_token_id"},
+
 };
 
 struct LLM_KV

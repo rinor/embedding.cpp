@@ -115,12 +115,13 @@ struct bert_vocab
 
     std::map<std::pair<std::string, std::string>, int> bpe_ranks;
 
-    // default LLaMA special tokens
+    // default bert special tokens
     id special_bos_id = 1;
     id special_eos_id = 2;
     id special_unk_id = 0;
-    id special_sep_id = -1;
+    id special_sep_id = -1; // init with -1 to make it easy to check
     id special_pad_id = -1;
+    id special_cls_id = -1;
 };
 
 struct bert_ctx
@@ -483,6 +484,14 @@ struct bert_loader
         printf("%s: n_layer = %d\n", __func__, hparams.n_layer);
         printf("%s: n_vocab_size = %d\n", __func__, hparams.n_vocab_size);
         printf("%s: f16     = %d\n", __func__, hparams.f16);
+
+        auto &vocab = bert->vocab;
+        printf("%s: vocab.special_bos_id  = %d\n", __func__, vocab.special_bos_id);
+        printf("%s: vocab.special_eos_id  = %d\n", __func__, vocab.special_eos_id);
+        printf("%s: vocab.special_unk_id  = %d\n", __func__, vocab.special_unk_id);
+        printf("%s: vocab.special_sep_id  = %d\n", __func__, vocab.special_sep_id);
+        printf("%s: vocab.special_pad_id  = %d\n", __func__, vocab.special_pad_id);
+        printf("%s: vocab.special_cls_id  = %d\n", __func__, vocab.special_cls_id);
     }
 
     void llm_load_hparams(bert_ctx *bert, const LLM_KV &kv)
@@ -504,7 +513,7 @@ struct bert_loader
         GGUF_GET_KEY(ctx, hparams.eps, gguf_get_val_f32, GGUF_TYPE_FLOAT32, true, kv(LLM_KV_ATTENTION_LAYERNORM_EPS));
     }
 
-    void llm_load_vocab(bert_ctx *bert, const LLM_KV &kv)
+    void llm_load_tokenizer(bert_ctx *bert, const LLM_KV &kv)
     {
         bert_model &model = bert->model;
         bert_vocab &vocab = bert->vocab;
@@ -562,9 +571,10 @@ struct bert_loader
         GGUF_GET_KEY(ctx, vocab.special_unk_id, gguf_get_val_u32, GGUF_TYPE_UINT32, false, kv(LLM_KV_TOKENIZER_UNK_ID));
         GGUF_GET_KEY(ctx, vocab.special_sep_id, gguf_get_val_u32, GGUF_TYPE_UINT32, false, kv(LLM_KV_TOKENIZER_SEP_ID));
         GGUF_GET_KEY(ctx, vocab.special_pad_id, gguf_get_val_u32, GGUF_TYPE_UINT32, false, kv(LLM_KV_TOKENIZER_PAD_ID));
+        GGUF_GET_KEY(ctx, vocab.special_cls_id, gguf_get_val_u32, GGUF_TYPE_UINT32, false, kv(LLM_KV_TOKENIZER_CLS_ID));
 
-        // special process
-        GGUF_GET_KEY(ctx, vocab.tokenizer_json, gguf_get_val_str, GGUF_TYPE_STRING, true, "ext.tokenizer.json");
+        // extra kv process for tokenizers-cpp
+        GGUF_GET_KEY(ctx, vocab.tokenizer_json, gguf_get_val_str, GGUF_TYPE_STRING, true, "blob.tokenizer.json");
         bert->tokenizer = new BertTokenizer(vocab.tokenizer_json);
     }
 
@@ -740,15 +750,16 @@ void bert_tokenize(
     // call Encode to turn prompt into token ids
     std::vector<int> ids = tokenizer->Encode(text);
 
-    int cls_tok_id = 101;
-    int sep_tok_id = 102;
+    int cls_tok_id = ctx->vocab.special_cls_id;
+    int sep_tok_id = ctx->vocab.special_sep_id;
+    int pad_tok_id = ctx->vocab.special_pad_id;
 
     int32_t t = 0;
     tokens[t++] = cls_tok_id;
     for (auto it = ids.begin(); it != ids.end(); it++)
     {
-        // is [PAD]
-        if (*it == 0)
+        // since tokenizers-cpp may do some padding (according to tokenizer.json)
+        if (*it == pad_tok_id)
         {
             break;
         }
@@ -783,7 +794,7 @@ bert_load_from_file(const char *fname)
     const auto kv = LLM_KV(LLM_ARCH_BERT);
 
     loader->llm_load_hparams(new_bert, kv);
-    loader->llm_load_vocab(new_bert, kv);
+    loader->llm_load_tokenizer(new_bert, kv);
 
     loader->llm_print_meta(new_bert);
 
@@ -1314,7 +1325,7 @@ bool bert_model_quantize(const char *fname_inp, const char *fname_out, int ftype
     const auto kv = LLM_KV(LLM_ARCH_BERT);
 
     loader->llm_load_hparams(new_bert, kv);
-    loader->llm_load_vocab(new_bert, kv);
+    loader->llm_load_tokenizer(new_bert, kv);
 
     loader->llm_print_meta(new_bert);
 
