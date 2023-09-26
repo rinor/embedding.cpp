@@ -1281,11 +1281,11 @@ static void llama_convert_tensor_internal(
     workers.clear();
 }
 
-bool bert_model_quantize(const char *fname_inp, const char *fname_out, int ftype)
+bool bert_model_quantize(const char *fname_inp, const char *fname_out, int ftype_out)
 {
     ggml_type quantized_type = GGML_TYPE_Q4_1;
 
-    switch (ftype)
+    switch (ftype_out)
     {
     case 2:
         quantized_type = GGML_TYPE_Q4_0;
@@ -1294,7 +1294,7 @@ bool bert_model_quantize(const char *fname_inp, const char *fname_out, int ftype
         quantized_type = GGML_TYPE_Q4_1;
         break;
     default:
-        fprintf(stderr, "%s: invalid quantization type %d\n", __func__, ftype);
+        fprintf(stderr, "%s: invalid quantization type %d\n", __func__, ftype_out);
         return false;
     };
 
@@ -1327,8 +1327,7 @@ bool bert_model_quantize(const char *fname_inp, const char *fname_out, int ftype
     params->only_copy = false;
     params->quantize_output_tensor = quantized_type;
 
-    // FIXME: fork from llama
-
+    // MENTION: bellow is a copy fork from llama.cpp
     int nthread = params->nthread;
 
     if (nthread <= 0)
@@ -1338,7 +1337,7 @@ bool bert_model_quantize(const char *fname_inp, const char *fname_out, int ftype
 
     if (params->only_copy)
     {
-        ftype = loader->ftype;
+        ftype_out = loader->ftype;
     }
 
     const size_t align = GGUF_DEFAULT_ALIGNMENT;
@@ -1347,7 +1346,7 @@ bool bert_model_quantize(const char *fname_inp, const char *fname_out, int ftype
     // copy the KV pairs from the input file
     gguf_set_kv(ctx_out, loader->ctx_gguf);
     gguf_set_val_u32(ctx_out, "general.quantization_version", GGML_QNT_VERSION);
-    gguf_set_val_u32(ctx_out, "general.file_type", ftype);
+    gguf_set_val_u32(ctx_out, "general.file_type", ftype_out);
 
     size_t total_size_org = 0;
     size_t total_size_new = 0;
@@ -1374,7 +1373,7 @@ bool bert_model_quantize(const char *fname_inp, const char *fname_out, int ftype
 
     const size_t meta_size = gguf_get_meta_size(ctx_out);
 
-    // printf("%s: meta size = %zu bytes\n", __func__, meta_size);
+    printf("%s: meta size = %zu bytes\n", __func__, meta_size);
 
     // placeholder for the meta data
     ::zeros(fout, meta_size);
@@ -1396,7 +1395,7 @@ bool bert_model_quantize(const char *fname_inp, const char *fname_out, int ftype
                ++idx, loader->n_tensors,
                ggml_get_name(tensor),
                "",
-               //    llama_format_tensor_shape(tensor).c_str(),
+               llama_format_tensor_shape(tensor).c_str(),
                ggml_type_name(tensor->type));
 
         // This used to be a regex, but <regex> has an extreme cost to compile times.
