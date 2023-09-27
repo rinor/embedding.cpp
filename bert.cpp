@@ -119,9 +119,9 @@ struct bert_vocab
     id special_bos_id = 1;
     id special_eos_id = 2;
     id special_unk_id = 0;
-    id special_sep_id = -1; // init with -1 to make it easy to check
-    id special_pad_id = -1;
-    id special_cls_id = -1;
+    id special_sep_id = -1; // init with -1 to make it easy to check, default in bert is 102
+    id special_pad_id = -1; // default in bert is 0
+    id special_cls_id = -1; // default in bert is 101
 };
 
 struct bert_ctx
