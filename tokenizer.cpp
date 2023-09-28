@@ -18,38 +18,38 @@
 
 using tokenizers::Tokenizer;
 
-BertTokenizer::BertTokenizer(const std::string &blob)
+bert_tokenizer::bert_tokenizer(const std::string &blob)
 {
 
     // Read blob from file.
-    // auto blob = LoadBytesFromFile(path);
+    // auto blob = load_bytes_from_file(path);
     // Note: all the current factory APIs takes in-memory blob as input.
     // This gives some flexibility on how these blobs can be read.
     this->tok = Tokenizer::FromBlobJSON(blob);
 }
 
-BertTokenizer::~BertTokenizer()
+bert_tokenizer::~bert_tokenizer()
 {
     this->tok.reset();
 }
 
-std::string BertTokenizer::Decode(const std::vector<int> &ids)
+std::string bert_tokenizer::decode(const std::vector<int> &ids)
 {
     return tok->Decode(ids);
 }
 
-std::string BertTokenizer::Decode(const int32_t id)
+std::string bert_tokenizer::decode(const int32_t id)
 {
     std::vector<int> ids(1, id);
     return tok->Decode(ids);
 }
 
-std::vector<int> BertTokenizer::Encode(const std::string &text)
+std::vector<int> bert_tokenizer::encode(const std::string &text)
 {
     return tok.get()->Encode(text);
 }
 
-std::string BertTokenizer::LoadBytesFromFile(const std::string &path)
+std::string bert_tokenizer::load_bytes_from_file(const std::string &path)
 {
     std::ifstream fs(path, std::ios::in | std::ios::binary);
     if (fs.fail())
@@ -66,7 +66,7 @@ std::string BertTokenizer::LoadBytesFromFile(const std::string &path)
     return data;
 }
 
-void BertTokenizer::PrintEncodeResult(const std::vector<int> &ids)
+void bert_tokenizer::print_encode_result(const std::vector<int> &ids)
 {
     std::cout << "tokens=[";
     for (size_t i = 0; i < ids.size(); ++i)
