@@ -186,8 +186,7 @@ struct bert_loader
 
         n_kv = gguf_get_n_kv(ctx_gguf);
         n_tensors = gguf_get_n_tensors(ctx_gguf);
-
-        // int32_t fver = gguf_get_version(ctx_gguf);
+        fver = (gguf_fver)gguf_get_version(ctx_gguf);
 
         for (int i = 0; i < n_tensors; i++)
         {
