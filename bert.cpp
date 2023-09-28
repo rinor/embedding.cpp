@@ -128,7 +128,7 @@ struct bert_ctx
 {
     bert_model model;
     bert_vocab vocab;
-    BertTokenizer *tokenizer;
+    bert_tokenizer *tokenizer;
 
     size_t mem_per_token;
     int64_t mem_per_input;
@@ -202,7 +202,7 @@ struct bert_loader
         }
 
         printf("%s: loaded meta data with %d key-value pairs and %d tensors from %s (version %s)\n",
-               __func__, n_kv, n_tensors, fname, llama_file_version_name(fver));
+               __func__, n_kv, n_tensors, fname, gguf_file_version_name(fver));
 
         // determine file type based on the number of tensors for each quantization and print meta data
         // TODO: make optional
@@ -225,7 +225,7 @@ struct bert_loader
                     type_max = meta->type;
                 }
 
-                // printf("%s: - tensor %4d: %32s %-8s [ %s ]\n", __func__, i, name, ggml_type_name(meta->type), llama_format_tensor_shape(meta).c_str());
+                printf("%s: - tensor %4d: %32s %-8s [ %s ]\n", __func__, i, name, ggml_type_name(meta->type), format_tensor_shape(meta).c_str());
             }
 
             switch (type_max)
@@ -388,8 +388,8 @@ struct bert_loader
                 throw std::runtime_error(
                     format("%s: tensor '%s' has wrong shape; expected %s, got %s",
                            __func__, name.c_str(),
-                           llama_format_tensor_shape(ne).c_str(),
-                           llama_format_tensor_shape(cur).c_str()));
+                           format_tensor_shape(ne).c_str(),
+                           format_tensor_shape(cur).c_str()));
             }
         }
 
@@ -575,7 +575,7 @@ struct bert_loader
 
         // extra kv process for tokenizers-cpp
         GGUF_GET_KEY(ctx, vocab.tokenizer_json, gguf_get_val_str, GGUF_TYPE_STRING, true, "blob.tokenizer.json");
-        bert->tokenizer = new BertTokenizer(vocab.tokenizer_json);
+        bert->tokenizer = new bert_tokenizer(vocab.tokenizer_json);
     }
 
     void llm_load_tensors(bert_ctx *bert)
@@ -748,7 +748,7 @@ void bert_tokenize(
     // TODO: add normalization
 
     // call Encode to turn prompt into token ids
-    std::vector<int> ids = tokenizer->Encode(text);
+    std::vector<int> ids = tokenizer->encode(text);
 
     int cls_tok_id = ctx->vocab.special_cls_id;
     int sep_tok_id = ctx->vocab.special_sep_id;
@@ -1081,8 +1081,8 @@ void bert_eval_batch(
         {
             mem_per_token = ggml_used_mem(ctx0) / N;
 
-            // printf("used_mem = %zu KB \n", ggml_used_mem(ctx0) / 1024);
-            // printf("mem_per_token = %zu KB \n", mem_per_token / 1024);
+            printf("used_mem = %zu KB \n", ggml_used_mem(ctx0) / 1024);
+            printf("mem_per_token = %zu KB \n", mem_per_token / 1024);
         }
 
         ggml_free(ctx0);
@@ -1406,7 +1406,7 @@ bool bert_model_quantize(const char *fname_inp, const char *fname_out, int ftype
                ++idx, loader->n_tensors,
                ggml_get_name(tensor),
                "",
-               llama_format_tensor_shape(tensor).c_str(),
+               format_tensor_shape(tensor).c_str(),
                ggml_type_name(tensor->type));
 
         // This used to be a regex, but <regex> has an extreme cost to compile times.
