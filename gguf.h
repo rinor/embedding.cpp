@@ -319,7 +319,7 @@ enum gguf_fver
     GGUF_FILE_VERSION_V2 = 2,
 };
 
-static const char *llama_file_version_name(gguf_fver version)
+static const char *gguf_file_version_name(gguf_fver version)
 {
     switch (version)
     {
@@ -332,7 +332,7 @@ static const char *llama_file_version_name(gguf_fver version)
     return "unknown";
 }
 
-static std::string llama_format_tensor_shape(const std::vector<int64_t> &ne)
+static std::string format_tensor_shape(const std::vector<int64_t> &ne)
 {
     char buf[256];
     snprintf(buf, sizeof(buf), "%5" PRId64, ne.at(0));
@@ -343,7 +343,7 @@ static std::string llama_format_tensor_shape(const std::vector<int64_t> &ne)
     return buf;
 }
 
-static std::string llama_format_tensor_shape(const struct ggml_tensor *t)
+static std::string format_tensor_shape(const struct ggml_tensor *t)
 {
     char buf[256];
     snprintf(buf, sizeof(buf), "%5" PRId64, t->ne[0]);
