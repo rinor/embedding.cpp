@@ -15,8 +15,9 @@ struct bert_tokenizer
 {
     std::unique_ptr<Tokenizer> tok;
 
-    bert_tokenizer(const std::string &blob);
+    bert_tokenizer();
     ~bert_tokenizer();
+    bool load(const std::string &blob);
     std::string decode(const std::vector<int> &ids);
     std::string decode(const int32_t id);
     std::vector<int> encode(const std::string &text);

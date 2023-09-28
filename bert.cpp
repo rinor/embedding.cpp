@@ -128,7 +128,7 @@ struct bert_ctx
 {
     bert_model model;
     bert_vocab vocab;
-    bert_tokenizer *tokenizer;
+    bert_tokenizer tokenizer;
 
     size_t mem_per_token;
     int64_t mem_per_input;
@@ -575,7 +575,7 @@ struct bert_loader
 
         // extra kv process for tokenizers-cpp
         GGUF_GET_KEY(ctx, vocab.tokenizer_json, gguf_get_val_str, GGUF_TYPE_STRING, true, "blob.tokenizer.json");
-        bert->tokenizer = new bert_tokenizer(vocab.tokenizer_json);
+        bert->tokenizer.load(vocab.tokenizer_json);
     }
 
     void llm_load_tensors(bert_ctx *bert)
@@ -743,12 +743,12 @@ void bert_tokenize(
     int32_t *n_tokens,
     int32_t n_max_tokens)
 {
-    auto tokenizer = ctx->tokenizer;
+    auto &tokenizer = ctx->tokenizer;
 
     // TODO: add normalization
 
     // call Encode to turn prompt into token ids
-    std::vector<int> ids = tokenizer->encode(text);
+    std::vector<int> ids = tokenizer.encode(text);
 
     int cls_tok_id = ctx->vocab.special_cls_id;
     int sep_tok_id = ctx->vocab.special_sep_id;
@@ -845,7 +845,6 @@ void bert_resize_ctx(bert_ctx *ctx, int32_t new_size)
 void bert_free(bert_ctx *ctx)
 {
     ggml_free(ctx->model.ctx);
-    delete ctx->tokenizer;
     delete ctx;
 }
 
@@ -1334,7 +1333,7 @@ bool bert_model_quantize(const char *fname_inp, const char *fname_out, int ftype
     printf(" done\n");
 
     llama_model_quantize_params *params = new llama_model_quantize_params;
-    params->nthread = 1;
+    params->nthread = 0;
     params->only_copy = false;
     params->quantize_output_tensor = quantized_type;
 
