@@ -9,6 +9,8 @@
 
 > This fork is a result from [pr 32](https://github.com/skeskinen/bert.cpp/pull/32), [pr 31](https://github.com/skeskinen/bert.cpp/pull/31) and [issue 36](https://github.com/skeskinen/bert.cpp/issues/36#issuecomment-1731338977).
 
+> Mention: `embedding.cpp` is still `WIP` and not ready for production.
+
 ## Feature (Origin)
 * Plain C/C++ implementation without dependencies
 * Inherit support for various architectures from ggml (x86 with AVX2, ARM, etc.)
