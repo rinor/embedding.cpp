@@ -17,7 +17,7 @@ struct bert_tokenizer
 
     bert_tokenizer();
     ~bert_tokenizer();
-    bool load(const std::string &blob);
+    void load(const std::string &blob);
     std::string decode(const std::vector<int> &ids);
     std::string decode(const int32_t id);
     std::vector<int> encode(const std::string &text);

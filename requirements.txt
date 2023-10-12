@@ -2,3 +2,6 @@ numpy
 transformers
 huggingface_hub
 gguf
+torch
+sentencepiece
+accelerate

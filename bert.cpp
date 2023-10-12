@@ -15,6 +15,9 @@
 #include <regex>
 #include <thread>
 #include <algorithm>
+#include <unordered_map>
+#include <array>
+#include <mutex>
 
 // default hparams (all-MiniLM-L6-v2)
 struct bert_hparams
@@ -342,7 +345,7 @@ struct bert_loader
         printf("%s: ggml ctx size = %6.2f MB\n", __func__, mmapped_size_p / (1024.0 * 1024.0));
     }
 
-    struct ggml_tensor *create_tensor_for(struct ggml_context *ctx, struct ggml_tensor *meta, ggml_backend backend)
+    struct ggml_tensor *create_tensor_for(struct ggml_context *ctx, struct ggml_tensor *meta, ggml_backend_type backend)
     {
         if (backend != GGML_BACKEND_CPU)
         {
@@ -363,7 +366,7 @@ struct bert_loader
         return tensor;
     }
 
-    struct ggml_tensor *create_tensor(struct ggml_context *ctx, const std::string &name, const std::vector<int64_t> &ne, ggml_backend backend)
+    struct ggml_tensor *create_tensor(struct ggml_context *ctx, const std::string &name, const std::vector<int64_t> &ne, ggml_backend_type backend)
     {
         struct ggml_tensor *cur = ggml_get_tensor(ctx_meta, name.c_str());
 
@@ -613,7 +616,7 @@ struct bert_loader
             const int n_vocab = hparams.n_vocab;
             const int n_vocab_size = hparams.n_vocab_size;
 
-            const ggml_backend backend = GGML_BACKEND_CPU;
+            const ggml_backend_type backend = GGML_BACKEND_CPU;
 
             size_t ctx_size;
             size_t mmapped_size;
@@ -1336,7 +1339,7 @@ bool bert_model_quantize(const char *fname_inp, const char *fname_out, int ftype
     params->only_copy = false;
     params->quantize_output_tensor = quantized_type;
 
-    // MENTION: bellow is a copy fork from llama.cpp
+    // MENTION: below is a copy fork from llama.cpp
     int nthread = params->nthread;
 
     if (nthread <= 0)

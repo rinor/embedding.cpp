@@ -27,7 +27,7 @@ bert_tokenizer::~bert_tokenizer()
     this->tok.reset();
 }
 
-bool bert_tokenizer::load(const std::string &blob)
+void bert_tokenizer::load(const std::string &blob)
 {
     // Read blob from file.
     // auto blob = load_bytes_from_file(path);

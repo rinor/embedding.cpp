@@ -1,7 +1,7 @@
 [submodule "ggml"]
 path = ggml
 url = https://github.com/ggerganov/ggml.git
-ref = 8ca2c19a3bb8622954d858fbf6383522684eaf34
+ref = 5834509ee377c8eb49f30b9c82e87950afc55507
 branch = master
 
 [submodule "tokenizers-cpp"]
