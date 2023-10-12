@@ -206,26 +206,22 @@ endif()
 add_subdirectory(ggml)
 
 # List of library names
-set(LIBRARIES bert bert_shared)
-set(BERT_SOURCE 
+set(LIBRARIES bert)
+set(BERT_SOURCE
     bert.cpp
     bert.h
     tokenizer.cpp
-    tokenizer.h    
+    tokenizer.h
     gguf.h
 )
 
 add_library(bert
             ${BERT_SOURCE}
             )
-add_library(bert_shared
-            SHARED
-            ${BERT_SOURCE}
-            )
 
 # Loop over the library names
 foreach(LIB ${LIBRARIES})
-    
+
 target_include_directories(${LIB} PRIVATE ${TOKENZIER_CPP_PATH}/include)
 
 target_include_directories(${LIB} PUBLIC .)
@@ -239,9 +235,12 @@ if(WIN32)
 include_directories(${CMAKE_SOURCE_DIR}/include_win)
 endif()
 
-set_target_properties(ggml PROPERTIES POSITION_INDEPENDENT_CODE ON)
-set_target_properties(bert_shared PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_compile_definitions(bert_shared PRIVATE BERT_SHARED BERT_BUILD)
-
-add_subdirectory(examples)
-add_subdirectory(models)
+if (BUILD_SHARED_LIBS)
+  set_target_properties(tokenizer_cpp_objs PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  set_target_properties(ggml PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  set_target_properties(bert PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  target_compile_definitions(bert PRIVATE BERT_SHARED BERT_BUILD)
+else()
+  add_subdirectory(examples)
+  add_subdirectory(models)
+endif()

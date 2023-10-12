@@ -8,7 +8,7 @@ N_EMBD = 384
 
 def embeddings_from_local_server(s, sock):
     sock.sendall(s.encode())
-    data = sock.recv(N_EMBD*4)
+    data = sock.recv(N_EMBD*4, socket.MSG_WAITALL)
     floats = struct.unpack('f' * N_EMBD, data)
     return floats
 
@@ -32,7 +32,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         texts = f.readlines()
 
     embedded_texts = [embed_text(text) for text in texts]
-    
+
     print(f"Loaded {len(texts)} lines.")
 
     def print_results(res):
