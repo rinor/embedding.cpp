@@ -1,4 +1,4 @@
 numpy
 transformers
 huggingface_hub
-gguf
+gguf==0.5.1
